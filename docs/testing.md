@@ -142,6 +142,7 @@ requires = ["setuptools"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 EOF
 
 mkdir -p tests
