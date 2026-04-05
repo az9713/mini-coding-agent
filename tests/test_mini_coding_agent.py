@@ -1,4 +1,5 @@
 import json
+import pytest
 from unittest.mock import patch
 
 from mini_coding_agent import (
@@ -759,6 +760,72 @@ def test_plan_approval_recorded_in_history(tmp_path):
     agent.ask("do something")
     assistant_msgs = [i["content"] for i in agent.session["history"] if i["role"] == "assistant"]
     assert any("Plan approved" in m for m in assistant_msgs)
+
+
+# ---------------------------------------------------------------------------
+# Persistent agent memory tests
+# ---------------------------------------------------------------------------
+
+def test_update_memory_creates_file(tmp_path):
+    """update_memory creates AGENT_MEMORY.md when it does not exist."""
+    agent = build_agent(tmp_path, [])
+    agent.run_tool("update_memory", {"note": "user prefers pytest over unittest"})
+    mem_file = tmp_path / "AGENT_MEMORY.md"
+    assert mem_file.exists()
+    assert "user prefers pytest over unittest" in mem_file.read_text(encoding="utf-8")
+
+
+def test_update_memory_appends_dated_bullet(tmp_path):
+    """update_memory appends a new dated bullet on each call."""
+    agent = build_agent(tmp_path, [])
+    agent.run_tool("update_memory", {"note": "first note"})
+    agent.run_tool("update_memory", {"note": "second note"})
+    content = (tmp_path / "AGENT_MEMORY.md").read_text(encoding="utf-8")
+    assert "first note" in content
+    assert "second note" in content
+    assert content.index("first note") < content.index("second note")
+
+
+def test_update_memory_rejects_empty_note(tmp_path):
+    """update_memory returns an error for blank notes."""
+    agent = build_agent(tmp_path, [])
+    result = agent.run_tool("update_memory", {"note": "   "})
+    assert "error" in result.lower()
+    assert "note" in result.lower()
+
+
+def test_persistent_memory_injected_into_prefix(tmp_path):
+    """When AGENT_MEMORY.md exists, its content appears in the system prompt prefix."""
+    (tmp_path / "AGENT_MEMORY.md").write_text(
+        "- [2026-01-01] user prefers black formatter\n", encoding="utf-8"
+    )
+    agent = build_agent(tmp_path, [])
+    assert "user prefers black formatter" in agent.prefix
+
+
+def test_no_persistent_memory_file_leaves_prefix_clean(tmp_path):
+    """When AGENT_MEMORY.md is absent, the prefix has no persistent memory section header."""
+    agent = build_agent(tmp_path, [])
+    assert "Persistent memory (from AGENT_MEMORY.md)" not in agent.prefix
+
+
+def test_persistent_memory_survives_reset(tmp_path):
+    """AGENT_MEMORY.md is not cleared by /reset."""
+    agent = build_agent(tmp_path, [])
+    agent.run_tool("update_memory", {"note": "survives reset"})
+    agent.reset()
+    mem_file = tmp_path / "AGENT_MEMORY.md"
+    assert mem_file.exists()
+    assert "survives reset" in mem_file.read_text(encoding="utf-8")
+
+
+def test_persistent_memory_visible_to_new_agent_instance(tmp_path):
+    """A second agent pointing at the same workspace sees existing AGENT_MEMORY.md in prefix."""
+    (tmp_path / "AGENT_MEMORY.md").write_text(
+        "- [2026-01-01] always use type hints\n", encoding="utf-8"
+    )
+    agent2 = build_agent(tmp_path, [])
+    assert "always use type hints" in agent2.prefix
 
 
 def test_plan_does_not_consume_tool_step_budget(tmp_path):

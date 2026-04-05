@@ -470,6 +470,12 @@ class MiniAgent:
                 "run": self.tool_patch_file,
             },
         }
+        tools["update_memory"] = {
+            "schema": {"note": "str"},
+            "risky": False,
+            "description": "Append a persistent note to AGENT_MEMORY.md in the workspace root.",
+            "run": self.tool_update_memory,
+        }
         if self.depth < self.max_depth:
             tools["delegate"] = {
                 "schema": {"task": "str", "max_steps": "int=3"},
@@ -504,6 +510,12 @@ class MiniAgent:
             " listing the numbered steps before using any tools:\n"
             "  <plan>\n  1. step one\n  2. step two\n  </plan>"
         ) if self.plan_mode else ""
+        mem_path = self.root / "AGENT_MEMORY.md"
+        if mem_path.is_file():
+            mem_content = mem_path.read_text(encoding="utf-8").strip()
+            persistent_memory_section = f"\nPersistent memory (from AGENT_MEMORY.md):\n{mem_content}\n"
+        else:
+            persistent_memory_section = ""
         return textwrap.dedent(
             f"""\
             You are Mini-Coding-Agent, a small local coding agent running through Ollama.
@@ -532,7 +544,7 @@ class MiniAgent:
             Valid response examples:
             {examples}
 
-            {self.workspace.text()}
+            {self.workspace.text()}{persistent_memory_section}
             """
         ).strip()
 
@@ -735,6 +747,7 @@ class MiniAgent:
             "write_file": '<tool name="write_file" path="binary_search.py"><content>def binary_search(nums, target):\n    return -1\n</content></tool>',
             "patch_file": '<tool name="patch_file" path="binary_search.py"><old_text>return -1</old_text><new_text>return mid</new_text></tool>',
             "delegate": '<tool>{"name":"delegate","args":{"task":"inspect README.md","max_steps":3}}</tool>',
+            "update_memory": '<tool>{"name":"update_memory","args":{"note":"project uses pytest and uv"}}</tool>',
         }
         return examples.get(name, "")
 
@@ -802,6 +815,11 @@ class MiniAgent:
             task = str(args.get("task", "")).strip()
             if not task:
                 raise ValueError("task must not be empty")
+            return
+
+        if name == "update_memory":
+            if not str(args.get("note", "")).strip():
+                raise ValueError("note must not be empty")
             return
 
     def approve(self, name, args):
@@ -1056,6 +1074,17 @@ class MiniAgent:
             raise ValueError(f"old_text must occur exactly once, found {count}")
         path.write_text(text.replace(old_text, str(args["new_text"]), 1), encoding="utf-8")
         return f"patched {path.relative_to(self.root)}"
+
+    def tool_update_memory(self, args):
+        note = str(args.get("note", "")).strip()
+        if not note:
+            raise ValueError("note must not be empty")
+        mem_path = self.root / "AGENT_MEMORY.md"
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        bullet = f"- [{date_str}] {note}\n"
+        with mem_path.open("a", encoding="utf-8") as fh:
+            fh.write(bullet)
+        return f"memory updated: {note}"
 
     ###################################################
     #### 6) Delegation And Bounded Subagents ##########
