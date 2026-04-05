@@ -713,6 +713,54 @@ def test_plan_auto_approval_skips_input(tmp_path):
     mock_input.assert_not_called()
 
 
+def test_plan_rule_in_prefix_when_plan_mode(tmp_path):
+    """plan_mode=True injects planning instruction into the system prompt prefix."""
+    agent = build_agent(tmp_path, [], plan_mode=True)
+    assert "<plan>" in agent.prefix
+
+
+def test_plan_rule_absent_from_prefix_by_default(tmp_path):
+    """plan_mode=False (default) keeps the prefix free of planning instructions."""
+    agent = build_agent(tmp_path, [])
+    assert "<plan>" not in agent.prefix
+
+
+def test_end_to_end_plan_then_tool_then_final(tmp_path):
+    """Full flow: plan emitted, approved, tool runs, final answer returned."""
+    (tmp_path / "hello.txt").write_text("alpha\n", encoding="utf-8")
+    agent = build_agent(
+        tmp_path,
+        [
+            "<plan>\n1. Read hello.txt\n2. Return contents\n</plan>",
+            '<tool>{"name":"read_file","args":{"path":"hello.txt","start":1,"end":1}}</tool>',
+            "<final>File contains: alpha</final>",
+        ],
+        plan_mode=True,
+        approval_policy="auto",
+    )
+    answer = agent.ask("show me hello.txt")
+    assert answer == "File contains: alpha"
+    history_kinds = [(i["role"], i.get("name")) for i in agent.session["history"]]
+    assert ("assistant", None) in history_kinds   # plan approval message recorded
+    assert ("tool", "read_file") in history_kinds
+
+
+def test_plan_approval_recorded_in_history(tmp_path):
+    """Approved plan is stored as assistant message so model sees context on next step."""
+    agent = build_agent(
+        tmp_path,
+        [
+            "<plan>\n1. Do it\n</plan>",
+            "<final>Done.</final>",
+        ],
+        plan_mode=True,
+        approval_policy="auto",
+    )
+    agent.ask("do something")
+    assistant_msgs = [i["content"] for i in agent.session["history"] if i["role"] == "assistant"]
+    assert any("Plan approved" in m for m in assistant_msgs)
+
+
 def test_plan_does_not_consume_tool_step_budget(tmp_path):
     """A <plan> response does not count against max_steps.
 

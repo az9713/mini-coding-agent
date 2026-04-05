@@ -375,6 +375,7 @@ class MiniAgent:
         read_only=False,
         verbose=True,
         auto_verify=False,
+        plan_mode=False,
     ):
         self.model_client = model_client
         self.workspace = workspace
@@ -388,6 +389,7 @@ class MiniAgent:
         self.read_only = read_only
         self.verbose = verbose
         self.auto_verify = auto_verify
+        self.plan_mode = plan_mode
         self.session = session or {
             "id": datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6],
             "created_at": now(),
@@ -497,6 +499,11 @@ class MiniAgent:
                 "<final>Done.</final>",
             ]
         )
+        plan_rule = (
+            "\n- For any task requiring multiple steps, first respond with a <plan> block"
+            " listing the numbered steps before using any tools:\n"
+            "  <plan>\n  1. step one\n  2. step two\n  </plan>"
+        ) if self.plan_mode else ""
         return textwrap.dedent(
             f"""\
             You are Mini-Coding-Agent, a small local coding agent running through Ollama.
@@ -517,7 +524,7 @@ class MiniAgent:
             - When writing tests, match the current implementation unless the user explicitly asked you to change the code.
             - New files should be complete and runnable, including obvious imports.
             - Do not repeat the same tool call with the same arguments if it did not help. Choose a different tool or return a final answer.
-            - Required tool arguments must not be empty. Do not call read_file, write_file, patch_file, run_shell, or delegate with args={{}}.
+            - Required tool arguments must not be empty. Do not call read_file, write_file, patch_file, run_shell, or delegate with args={{}}.{plan_rule}
 
             Tools:
             {tool_text}
@@ -1145,6 +1152,7 @@ def build_agent(args):
             max_steps=args.max_steps,
             max_new_tokens=args.max_new_tokens,
             auto_verify=args.auto_verify,
+            plan_mode=args.plan,
         )
     return MiniAgent(
         model_client=model,
@@ -1155,6 +1163,7 @@ def build_agent(args):
         max_steps=args.max_steps,
         max_new_tokens=args.max_new_tokens,
         auto_verify=args.auto_verify,
+        plan_mode=args.plan,
     )
 
 
@@ -1175,6 +1184,7 @@ def build_arg_parser():
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature sent to Ollama.")
     parser.add_argument("--top-p", type=float, default=0.9, help="Top-p sampling value sent to Ollama.")
     parser.add_argument("--auto-verify", action="store_true", default=False, help="Run tests automatically after every file write or patch.")
+    parser.add_argument("--plan", action="store_true", default=False, help="Before executing, emit a numbered plan and wait for approval.")
     return parser
 
 
