@@ -9,6 +9,7 @@ from mini_coding_agent import (
     SessionStore,
     WorkspaceContext,
     build_welcome,
+    detect_test_command,
 )
 
 
@@ -410,3 +411,239 @@ def test_checkpoints_survive_resume(tmp_path):
     results = resumed.checkpoint_store.rewind(1)
     assert results is not None
     assert (tmp_path / "hello.txt").read_text(encoding="utf-8") == "original\n"
+
+
+# ---------------------------------------------------------------------------
+# Streaming tests
+# ---------------------------------------------------------------------------
+
+def test_fake_model_client_calls_on_token(tmp_path):
+    """FakeModelClient invokes on_token with the full output string."""
+    received = []
+    client = FakeModelClient(["<final>hello</final>"])
+    result = client.complete("prompt", 512, on_token=received.append)
+    assert result == "<final>hello</final>"
+    assert received == ["<final>hello</final>"]
+
+
+def test_fake_model_client_skips_on_token_when_none(tmp_path):
+    """FakeModelClient works normally when on_token is None."""
+    client = FakeModelClient(["<final>hello</final>"])
+    result = client.complete("prompt", 512, on_token=None)
+    assert result == "<final>hello</final>"
+
+
+def test_ollama_client_sets_stream_true_when_on_token_given():
+    """OllamaModelClient sends stream=true in payload when on_token is provided."""
+    captured = {}
+
+    class FakeStreamResponse:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def __iter__(self):
+            yield json.dumps({"response": "hi", "done": False}).encode() + b"\n"
+            yield json.dumps({"response": "", "done": True}).encode() + b"\n"
+
+    def fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeStreamResponse()
+
+    client = OllamaModelClient(model="m", host="http://127.0.0.1:11434", temperature=0.2, top_p=0.9, timeout=30)
+    with patch("urllib.request.urlopen", fake_urlopen):
+        result = client.complete("hello", 42, on_token=lambda t: None)
+
+    assert captured["body"]["stream"] is True
+    assert result == "hi"
+
+
+def test_ollama_client_sets_stream_false_when_no_on_token():
+    """OllamaModelClient sends stream=false in payload when on_token is None."""
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return json.dumps({"response": "ok"}).encode()
+
+    def fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse()
+
+    client = OllamaModelClient(model="m", host="http://127.0.0.1:11434", temperature=0.2, top_p=0.9, timeout=30)
+    with patch("urllib.request.urlopen", fake_urlopen):
+        result = client.complete("hello", 42, on_token=None)
+
+    assert captured["body"]["stream"] is False
+    assert result == "ok"
+
+
+def test_ollama_client_accumulates_streamed_tokens():
+    """OllamaModelClient concatenates all token chunks and calls on_token for each."""
+    received = []
+
+    class FakeStreamResponse:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def __iter__(self):
+            for word in ["<final>", "hello", " world", "</final>"]:
+                yield json.dumps({"response": word, "done": False}).encode() + b"\n"
+            yield json.dumps({"response": "", "done": True}).encode() + b"\n"
+
+    with patch("urllib.request.urlopen", lambda req, timeout: FakeStreamResponse()):
+        client = OllamaModelClient(model="m", host="http://127.0.0.1:11434", temperature=0.2, top_p=0.9, timeout=30)
+        result = client.complete("p", 512, on_token=received.append)
+
+    assert result == "<final>hello world</final>"
+    assert received == ["<final>", "hello", " world", "</final>"]
+
+
+def test_verbose_agent_calls_on_token(tmp_path):
+    """verbose=True agent passes an on_token callback so FakeModelClient records it."""
+    received = []
+    original_complete = FakeModelClient.complete
+
+    def patched_complete(self, prompt, max_new_tokens, on_token=None):
+        result = original_complete(self, prompt, max_new_tokens, on_token=on_token)
+        if on_token is not None:
+            received.append("callback_was_set")
+        return result
+
+    agent = build_agent(tmp_path, ["<final>Done.</final>"], verbose=True)
+    with patch.object(FakeModelClient, "complete", patched_complete):
+        agent.ask("do something")
+
+    assert "callback_was_set" in received
+
+
+def test_non_verbose_agent_does_not_set_on_token(tmp_path):
+    """verbose=False agent passes on_token=None so no streaming output occurs."""
+    callback_set = []
+    original_complete = FakeModelClient.complete
+
+    def patched_complete(self, prompt, max_new_tokens, on_token=None):
+        if on_token is not None:
+            callback_set.append(True)
+        return original_complete(self, prompt, max_new_tokens, on_token=on_token)
+
+    agent = build_agent(tmp_path, ["<final>Done.</final>"], verbose=False)
+    with patch.object(FakeModelClient, "complete", patched_complete):
+        agent.ask("do something")
+
+    assert callback_set == []
+
+
+# ---------------------------------------------------------------------------
+# Auto-verify tests
+# ---------------------------------------------------------------------------
+
+def test_detect_test_command_finds_pytest(tmp_path):
+    """detect_test_command returns a pytest command when pyproject.toml mentions pytest."""
+    (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n", encoding="utf-8")
+    cmd = detect_test_command(tmp_path)
+    assert cmd is not None
+    assert "pytest" in cmd
+
+
+def test_detect_test_command_finds_npm_test(tmp_path):
+    """detect_test_command returns npm test when package.json has a test script."""
+    (tmp_path / "package.json").write_text('{"scripts": {"test": "jest"}}', encoding="utf-8")
+    cmd = detect_test_command(tmp_path)
+    assert cmd == "npm test"
+
+
+def test_detect_test_command_finds_makefile(tmp_path):
+    """detect_test_command returns make test when Makefile has a test target."""
+    (tmp_path / "Makefile").write_text("test:\n\tpython -m pytest\n", encoding="utf-8")
+    cmd = detect_test_command(tmp_path)
+    assert cmd == "make test"
+
+
+def test_detect_test_command_returns_none_when_no_config(tmp_path):
+    """detect_test_command returns None when no recognisable test config is present."""
+    assert detect_test_command(tmp_path) is None
+
+
+def test_auto_verify_appended_after_write_file(tmp_path):
+    """auto_verify=True appends test results to write_file tool output."""
+    agent = build_agent(
+        tmp_path,
+        [
+            '<tool name="write_file" path="hello.py"><content>print("hi")\n</content></tool>',
+            "<final>Done.</final>",
+        ],
+        auto_verify=True,
+    )
+
+    with patch.object(agent, "_auto_verify", return_value="tests passed (exit 0):\n1 passed"):
+        answer = agent.ask("Create hello.py")
+
+    tool_events = [item for item in agent.session["history"] if item["role"] == "tool"]
+    write_event = next(e for e in tool_events if e["name"] == "write_file")
+    assert "auto-verify:" in write_event["content"]
+    assert "tests passed" in write_event["content"]
+
+
+def test_auto_verify_appended_after_patch_file(tmp_path):
+    """auto_verify=True appends test results to patch_file tool output."""
+    (tmp_path / "sample.txt").write_text("hello world\n", encoding="utf-8")
+    agent = build_agent(
+        tmp_path,
+        [
+            '<tool>{"name":"patch_file","args":{"path":"sample.txt","old_text":"world","new_text":"agent"}}</tool>',
+            "<final>Done.</final>",
+        ],
+        auto_verify=True,
+    )
+
+    with patch.object(agent, "_auto_verify", return_value="tests passed (exit 0):\n1 passed"):
+        agent.ask("Patch sample.txt")
+
+    tool_events = [item for item in agent.session["history"] if item["role"] == "tool"]
+    patch_event = next(e for e in tool_events if e["name"] == "patch_file")
+    assert "auto-verify:" in patch_event["content"]
+
+
+def test_auto_verify_not_called_without_flag(tmp_path):
+    """auto_verify=False (default) never calls _auto_verify."""
+    agent = build_agent(
+        tmp_path,
+        [
+            '<tool name="write_file" path="hello.py"><content>print("hi")\n</content></tool>',
+            "<final>Done.</final>",
+        ],
+    )
+
+    with patch.object(agent, "_auto_verify", return_value="should not appear") as mock_verify:
+        agent.ask("Create hello.py")
+
+    mock_verify.assert_not_called()
+
+
+def test_auto_verify_not_called_for_read_only_tools(tmp_path):
+    """auto_verify is not triggered by safe tools like list_files or read_file."""
+    (tmp_path / "hello.txt").write_text("hi\n", encoding="utf-8")
+    agent = build_agent(
+        tmp_path,
+        [
+            '<tool>{"name":"read_file","args":{"path":"hello.txt","start":1,"end":1}}</tool>',
+            "<final>Done.</final>",
+        ],
+        auto_verify=True,
+    )
+
+    with patch.object(agent, "_auto_verify", return_value="should not appear") as mock_verify:
+        agent.ask("Read hello.txt")
+
+    mock_verify.assert_not_called()
+
+
+def test_auto_verify_real_pytest_passes(tmp_path):
+    """_auto_verify detects pytest from pyproject.toml and returns a pass result."""
+    (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n", encoding="utf-8")
+    (tmp_path / "test_trivial.py").write_text("def test_ok(): assert True\n", encoding="utf-8")
+    agent = build_agent(tmp_path, [], auto_verify=True)
+
+    result = agent._auto_verify()
+
+    assert result is not None
+    assert "passed" in result

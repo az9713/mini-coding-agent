@@ -49,8 +49,27 @@ IGNORED_PATH_NAMES = {".git", ".mini-coding-agent", "__pycache__", ".pytest_cach
 # 2) Prompt Shape And Cache Reuse -> build_prefix, memory_text, prompt
 # 3) Structured Tools, Validation, And Permissions -> build_tools, run_tool, validate_tool, approve, parse, path, tool_*
 # 4) Context Reduction And Output Management -> clip, history_text
-# 5) Transcripts, Memory, And Resumption -> SessionStore, record, note_tool, ask, reset
+# 5) Transcripts, Memory, And Resumption -> SessionStore, CheckpointStore, record, note_tool, ask, reset
 # 6) Delegation And Bounded Subagents -> tool_delegate
+
+
+def detect_test_command(root):
+    """Return the project's test command, or None if undetectable."""
+    root = Path(root)
+    if (root / "pyproject.toml").is_file():
+        if "pytest" in (root / "pyproject.toml").read_text(encoding="utf-8"):
+            return "uv run pytest -q" if shutil.which("uv") else "python -m pytest -q"
+    if (root / "package.json").is_file():
+        try:
+            pkg = json.loads((root / "package.json").read_text(encoding="utf-8"))
+            if "test" in pkg.get("scripts", {}):
+                return "npm test"
+        except Exception:
+            pass
+    if (root / "Makefile").is_file():
+        if re.search(r"^test\s*:", (root / "Makefile").read_text(encoding="utf-8"), re.MULTILINE):
+            return "make test"
+    return None
 
 
 def now():
@@ -266,11 +285,14 @@ class FakeModelClient:
         self.outputs = list(outputs)
         self.prompts = []
 
-    def complete(self, prompt, max_new_tokens):
+    def complete(self, prompt, max_new_tokens, on_token=None):
         self.prompts.append(prompt)
         if not self.outputs:
             raise RuntimeError("fake model ran out of outputs")
-        return self.outputs.pop(0)
+        output = self.outputs.pop(0)
+        if on_token is not None:
+            on_token(output)
+        return output
 
 
 class OllamaModelClient:
@@ -281,11 +303,12 @@ class OllamaModelClient:
         self.top_p = top_p
         self.timeout = timeout
 
-    def complete(self, prompt, max_new_tokens):
+    def complete(self, prompt, max_new_tokens, on_token=None):
+        streaming = on_token is not None
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "stream": False,
+            "stream": streaming,
             "raw": False,
             "think": False,
             "options": {
@@ -302,7 +325,24 @@ class OllamaModelClient:
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                data = json.loads(response.read().decode("utf-8"))
+                if streaming:
+                    tokens = []
+                    for line in response:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        chunk = json.loads(line.decode("utf-8"))
+                        if chunk.get("error"):
+                            raise RuntimeError(f"Ollama error: {chunk['error']}")
+                        token = chunk.get("response", "")
+                        if token:
+                            on_token(token)
+                            tokens.append(token)
+                        if chunk.get("done"):
+                            break
+                    return "".join(tokens)
+                else:
+                    data = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"Ollama request failed with HTTP {exc.code}: {body}") from exc
@@ -333,6 +373,8 @@ class MiniAgent:
         depth=0,
         max_depth=1,
         read_only=False,
+        verbose=True,
+        auto_verify=False,
     ):
         self.model_client = model_client
         self.workspace = workspace
@@ -344,6 +386,8 @@ class MiniAgent:
         self.depth = depth
         self.max_depth = max_depth
         self.read_only = read_only
+        self.verbose = verbose
+        self.auto_verify = auto_verify
         self.session = session or {
             "id": datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6],
             "created_at": now(),
@@ -565,19 +609,25 @@ class MiniAgent:
             memory["task"] = clip(user_message.strip(), 300)
         self.record({"role": "user", "content": user_message, "created_at": now()})
 
+        on_token = (lambda t: print(t, end="", flush=True)) if self.verbose else None
+
         tool_steps = 0
         attempts = 0
         max_attempts = max(self.max_steps * 3, self.max_steps + 4)
 
         while tool_steps < self.max_steps and attempts < max_attempts:
             attempts += 1
-            raw = self.model_client.complete(self.prompt(user_message), self.max_new_tokens)
+            raw = self.model_client.complete(self.prompt(user_message), self.max_new_tokens, on_token=on_token)
+            if self.verbose:
+                print()
             kind, payload = self.parse(raw)
 
             if kind == "tool":
                 tool_steps += 1
                 name = payload.get("name", "")
                 args = payload.get("args", {})
+                if self.verbose:
+                    print(f"[{name}]")
                 result = self.run_tool(name, args)
                 self.record(
                     {
@@ -627,9 +677,28 @@ class MiniAgent:
         if tool["risky"] and not self.approve(name, args):
             return f"error: approval denied for {name}"
         try:
-            return clip(tool["run"](args))
+            result = clip(tool["run"](args))
         except Exception as exc:
             return f"error: tool {name} failed: {exc}"
+        if name in {"write_file", "patch_file"} and self.auto_verify:
+            verify = self._auto_verify()
+            if verify:
+                result = f"{result}\n\nauto-verify:\n{verify}"
+        return result
+
+    def _auto_verify(self):
+        cmd = detect_test_command(self.root)
+        if not cmd:
+            return None
+        try:
+            proc = subprocess.run(cmd, cwd=self.root, shell=True, capture_output=True, text=True, timeout=60)
+            status = "passed" if proc.returncode == 0 else "FAILED"
+            output = clip(proc.stdout.strip() or proc.stderr.strip() or "(no output)", 1000)
+            return f"tests {status} (exit {proc.returncode}):\n{output}"
+        except subprocess.TimeoutExpired:
+            return "test command timed out after 60s"
+        except Exception as exc:
+            return f"test command error: {exc}"
 
     def repeated_tool_call(self, name, args):
         tool_events = [item for item in self.session["history"] if item["role"] == "tool"]
@@ -972,6 +1041,7 @@ class MiniAgent:
             depth=self.depth + 1,
             max_depth=self.max_depth,
             read_only=True,
+            verbose=False,
         )
         child.session["memory"]["task"] = task
         child.session["memory"]["notes"] = [clip(self.history_text(), 300)]
@@ -1046,6 +1116,7 @@ def build_agent(args):
             approval_policy=args.approval,
             max_steps=args.max_steps,
             max_new_tokens=args.max_new_tokens,
+            auto_verify=args.auto_verify,
         )
     return MiniAgent(
         model_client=model,
@@ -1055,6 +1126,7 @@ def build_agent(args):
         approval_policy=args.approval,
         max_steps=args.max_steps,
         max_new_tokens=args.max_new_tokens,
+        auto_verify=args.auto_verify,
     )
 
 
@@ -1074,6 +1146,7 @@ def build_arg_parser():
     parser.add_argument("--max-new-tokens", type=int, default=512, help="Maximum model output tokens per step.")
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature sent to Ollama.")
     parser.add_argument("--top-p", type=float, default=0.9, help="Top-p sampling value sent to Ollama.")
+    parser.add_argument("--auto-verify", action="store_true", default=False, help="Run tests automatically after every file write or patch.")
     return parser
 
 
@@ -1088,7 +1161,9 @@ def main(argv=None):
         if prompt:
             print()
             try:
-                print(agent.ask(prompt))
+                answer = agent.ask(prompt)
+                if not agent.verbose:
+                    print(answer)
             except RuntimeError as exc:
                 print(str(exc), file=sys.stderr)
                 return 1
@@ -1168,7 +1243,9 @@ def main(argv=None):
 
         print()
         try:
-            print(agent.ask(user_input))
+            answer = agent.ask(user_input)
+            if not agent.verbose:
+                print(answer)
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
 
