@@ -25,18 +25,19 @@ set task      -- store first message as task in memory
 |         |                                                  |
 |    kind, payload = parse(raw)                             |
 |         |                                                  |
-|    +----+----------+------------------+                   |
-|    |               |                  |                   |
-|  "tool"         "retry"           "final"                 |
-|    |               |                  |                   |
-|  tool_steps+=1  record(notice)    record(answer)          |
-|  run_tool()     (no tool_steps    remember(notes)         |
-|  record(result)  increment)       return answer -----+    |
-|  note_tool()    continue          |                  |    |
-|  continue          |              |                  |    |
-|    +---------------+              |                  |    |
-|    |                              |                  |    |
-+----+------------------------------+------------------+    |
+|    +----+------+----------+------------------+            |
+|    |           |           |                  |            |
+|  "plan"     "tool"      "retry"           "final"         |
+|    |           |           |                  |            |
+|  _confirm  tool_steps+=1  record(notice)  record(answer)  |
+|   _plan()  run_tool()     (no tool_steps  remember(notes) |
+|    |       record(result)  increment)     return ans --+  |
+|  approved? note_tool()    continue        |             |  |
+|  inject    continue          |            |             |  |
+|  to hist.     |              |            |             |  |
+|  continue     +──────────────+            |             |  |
+|    |                                      |             |  |
++----+--------------------------------------+-------------+  |
      |                                                      |
      v                                                      |
 budget exhausted:                                           |
@@ -90,9 +91,11 @@ This means the agent can make up to 18 total model calls while executing at most
 
 ---
 
-## The Three Response Kinds
+## The Four Response Kinds
 
-`parse()` always returns a two-element tuple `(kind, payload)`. The `kind` string is one of exactly three values. The loop handles each differently.
+`parse()` always returns a two-element tuple `(kind, payload)`. The `kind` string is one of exactly four values. The loop handles each differently.
+
+**`"plan"`** means the model emitted a `<plan>` block before using any tools. This only occurs when the agent is started with `--plan`. The payload is the plan text. The loop calls `_confirm_plan()`, which shows the plan to the user and waits for confirmation (or auto-approves if `--approval auto`). If approved, the plan text is injected into history so the model knows to proceed; the loop then `continue`s. If rejected, the loop returns `"Plan cancelled."` immediately. Neither `tool_steps` nor the effective retry budget is charged for a plan response — it does not consume the tool step budget.
 
 **`"tool"`** means the model wants to call a function. The payload is a dict with at least a `"name"` key and an `"args"` key. The loop increments `tool_steps`, calls `run_tool(name, args)`, records the result to history, and calls `note_tool()` to update working memory. Then it `continue`s — the model will see the tool result on the next iteration.
 
@@ -108,6 +111,18 @@ This means the agent can make up to 18 total model calls while executing at most
 
 ```
 raw model output (string)
+        |
+        v
+  Contains "<plan>" tag?
+  AND ("<tool>" absent OR "<plan>" appears first?)
+        |
+      yes --> Extract body between <plan>...</plan>
+                |
+              Non-empty? --> return ("plan", plan_text)
+                |
+              Empty     --> return ("retry", notice: "empty <plan> block")
+        |
+      no
         |
         v
   Contains "<tool>" tag?
@@ -163,7 +178,7 @@ raw model output (string)
       empty     --> return ("retry", notice: "model returned an empty response")
 ```
 
-The priority order matters. The `<tool>` check precedes the `<final>` check, so a response that contains both tags is treated as a tool call if the tool tag appears first, and as a final answer if the final tag appears first. This handles model outputs that accidentally include both tags.
+The priority order matters. The `<plan>` check is first and only fires when the tag appears before any `<tool>` tag in the response — this prevents a model that includes planning notes inside a tool call from being misidentified. The `<tool>` check precedes the `<final>` check, so a response that contains both tags is treated as a tool call if the tool tag appears first, and as a final answer if the final tag appears first. This handles model outputs that accidentally include both tags.
 
 The bare-text fallback at the bottom is intentional. Some models — especially smaller local models — do not reliably wrap their answers in tags. Rather than forcing a retry every time, the agent accepts bare non-empty text as a final answer. This is a pragmatic concession to the reliability characteristics of small local models.
 

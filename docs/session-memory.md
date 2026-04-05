@@ -370,6 +370,7 @@ current session.
 | `/rewind N` | Reverts file changes from turn number N specifically |
 | `/diff` | Shows a unified diff of all file changes the agent has made this session |
 | `/diff N` | Shows a unified diff of file changes from turn N only |
+| `/forget` | Deletes `AGENT_MEMORY.md` from the workspace root, clearing all persistent memory |
 | `/reset` | Clears `history[]` to `[]`, `memory` to its empty defaults, and the checkpoint data; keeps the same session ID and saves immediately |
 
 `/reset` is a destructive operation: the history, memory, and checkpoint data are
@@ -377,6 +378,70 @@ gone and cannot be recovered (all files are immediately overwritten on disk).
 The session ID is preserved, so the file path does not change. Use `/reset`
 when you want to start a fresh conversation in the same workspace without
 creating a new session file.
+
+`/forget` removes `AGENT_MEMORY.md` from the workspace and immediately rebuilds
+the prefix so the deleted content is no longer visible to the model within the
+same session. Unlike `/reset`, it does not affect session history or working memory.
+
+---
+
+## Persistent Memory
+
+**Working memory** (described above) is session-scoped: it resets with `/reset`
+and starts fresh in every new session. **Persistent memory** is workspace-scoped:
+it is stored in a plain Markdown file (`AGENT_MEMORY.md`) at the workspace root
+and injected into the system prompt automatically whenever that file exists.
+
+### Writing persistent notes
+
+The model calls the `update_memory` tool to append a dated bullet to `AGENT_MEMORY.md`:
+
+```
+<tool>{"name":"update_memory","args":{"note":"this project uses black for formatting"}}</tool>
+```
+
+The file after two calls might look like this:
+
+```markdown
+- 2026-04-05: this project uses black for formatting
+- 2026-04-05: all API endpoints require JWT authentication
+```
+
+Each note is prefixed with the UTC date. The file is created if it does not
+exist. You can also edit `AGENT_MEMORY.md` by hand — it is plain Markdown.
+
+### Injection into the prefix
+
+At startup, `build_prefix()` reads `AGENT_MEMORY.md` from the workspace root.
+If the file exists and is non-empty, its contents are injected into the static
+prefix under a dedicated heading:
+
+```
+Persistent memory (from AGENT_MEMORY.md):
+- 2026-04-05: this project uses black for formatting
+- 2026-04-05: all API endpoints require JWT authentication
+```
+
+This section appears after the workspace snapshot and before the tool catalog.
+The model sees it on every model call without the user needing to repeat
+themselves.
+
+### Survival across sessions and `/reset`
+
+`AGENT_MEMORY.md` is a workspace file, not part of the session JSON. It is
+**not** cleared by `/reset`. It persists until explicitly deleted.
+
+### Clearing persistent memory
+
+Use `/forget` to delete `AGENT_MEMORY.md`:
+
+```
+mini-coding-agent> /forget
+persistent memory cleared
+```
+
+The prefix is rebuilt immediately. Within the same session the model no longer
+sees the deleted notes on its next call.
 
 ---
 

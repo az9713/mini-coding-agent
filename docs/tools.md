@@ -1,6 +1,6 @@
 # Tools Reference
 
-This document is the authoritative reference for the seven tools available to
+This document is the authoritative reference for the eight tools available to
 mini-coding-agent. It explains what each tool does, what arguments it accepts,
 what the model sees back, how errors surface, and why the safety boundaries are
 designed the way they are.
@@ -15,8 +15,8 @@ tool call, wait for the result, and then decide what to do next. Every action
 the agent takes is therefore auditable: there is a complete record of every
 tool name, argument set, and result in the session JSON.
 
-The agent exposes seven tools in its system prompt. Six are always available;
-the seventh (`delegate`) is registered only when the agent is not already at
+The agent exposes eight tools in its system prompt. Seven are always available;
+the eighth (`delegate`) is registered only when the agent is not already at
 maximum delegation depth. Each tool listing in the prompt includes the
 argument schema, a risk flag (`safe` or `approval required`), and a one-line
 description.
@@ -816,6 +816,96 @@ error: invalid arguments for delegate: delegate depth exceeded
 ```
 error: invalid arguments for delegate: task must not be empty
 example: <tool>{"name":"delegate","args":{"task":"inspect README.md","max_steps":3}}</tool>
+```
+
+---
+
+## `update_memory`
+
+**Purpose:** Append a persistent, dated note to `AGENT_MEMORY.md` in the
+workspace root. Notes written here survive `/reset` and are injected into
+the system prompt at the start of every future session.
+
+### Schema
+
+| Argument | Type | Default | Required |
+|---|---|---|---|
+| `note` | string | — | **required** |
+
+### Risk
+
+**Safe.** `update_memory` writes to `AGENT_MEMORY.md` but does not require
+approval — it is a low-risk bookkeeping operation and the file is
+user-editable at any time.
+
+### Validation rules
+
+- `note` must not be empty after stripping whitespace.
+
+### Output format
+
+```
+memory updated
+```
+
+The note is appended to `AGENT_MEMORY.md` (creating it if absent) in this
+format:
+
+```markdown
+- 2026-04-05: the project uses black for code formatting
+```
+
+The date prefix is the UTC date at the time of the call. Each bullet is
+appended on its own line. The file grows indefinitely until manually edited
+or cleared with `/forget`.
+
+### Persistence across sessions
+
+On startup, `build_prefix()` checks for `AGENT_MEMORY.md` in the workspace
+root. If the file exists, its contents are injected into the static prefix
+under a "Persistent memory" heading:
+
+```
+Persistent memory (from AGENT_MEMORY.md):
+- 2026-04-05: the project uses black for code formatting
+```
+
+This means the model sees these notes without the user having to repeat
+them. The memory file is part of the workspace (not the session JSON), so
+it is unaffected by `/reset` and survives across all sessions in the same
+workspace.
+
+### Clearing persistent memory
+
+Use the `/forget` REPL command to delete `AGENT_MEMORY.md`:
+
+```
+mini-coding-agent> /forget
+persistent memory cleared
+```
+
+After `/forget`, the prefix is rebuilt immediately so the deleted content is
+no longer visible to the model in the same session.
+
+### Example calls
+
+JSON format:
+```
+<tool>{"name":"update_memory","args":{"note":"this project uses pytest with the src layout"}}</tool>
+```
+
+XML format:
+```
+<tool name="update_memory">
+<note>all API endpoints require JWT authentication</note>
+</tool>
+```
+
+### What can go wrong
+
+```
+error: invalid arguments for update_memory: note must not be empty
+example: <tool>{"name":"update_memory","args":{"note":"project uses black for formatting"}}</tool>
 ```
 
 ---

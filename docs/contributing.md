@@ -33,7 +33,7 @@ Python 3.10 or later is required (declared in `pyproject.toml` as `requires-pyth
 
 ```
 mini-coding-agent/
-├── mini_coding_agent.py          # Entire agent implementation (~1017 lines)
+├── mini_coding_agent.py          # Entire agent implementation (~1334 lines)
 ├── pyproject.toml                # Build config, dependencies, entry point
 ├── tests/
 │   └── test_mini_coding_agent.py # All tests

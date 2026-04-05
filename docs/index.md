@@ -6,7 +6,7 @@ A minimal, single-file coding agent that runs entirely on your local machine usi
 
 ## Why This Project Is Worth Studying
 
-Most production AI agents are framework-wrapped black boxes. mini-coding-agent is the opposite: everything that makes a coding agent work — the prompt assembly, the tool dispatch, the approval gate, the session memory, the context compression — lives in one readable Python file (`mini_coding_agent.py`, ~1017 lines). No magic. No hidden layers.
+Most production AI agents are framework-wrapped black boxes. mini-coding-agent is the opposite: everything that makes a coding agent work — the prompt assembly, the tool dispatch, the approval gate, the session memory, the context compression — lives in one readable Python file (`mini_coding_agent.py`, ~1334 lines). No magic. No hidden layers.
 
 That makes it an unusually good teaching artifact. When you read the code, you are reading a complete, working answer to the question: "What is the minimum viable implementation of a local coding agent?" Each of the six components (described in `how-it-works.md`) maps to a named section in the source, so you can follow the architecture directly into the code.
 
@@ -21,7 +21,7 @@ The zero-dependency constraint is also deliberate. Every import in the file is f
 | `quickstart.md` | Zero-to-running setup guide — install Python, Ollama, pull the model, run the agent |
 | `how-it-works.md` | The six named components and how they compose into a working agent |
 | `agent-loop.md` | Deep-dive into the `ask()` loop: steps, retries, stopping conditions, and the parse-dispatch cycle |
-| `tools.md` | All seven tools, their schemas, which are risky, validation rules, and how approval works |
+| `tools.md` | All eight tools, their schemas, which are risky, validation rules, and how approval works |
 | `prompt-engineering.md` | How the static prefix, live workspace context, memory, and transcript are assembled into a single prompt string |
 | `session-memory.md` | Session IDs, JSON persistence, working memory structure, history compression, and the `/memory` view |
 | `delegation.md` | How the `delegate` tool spawns a read-only child agent, depth limits, and why subagents are always `approval=never` |

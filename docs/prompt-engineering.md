@@ -65,11 +65,24 @@ Each section has a distinct job, and the order is deliberate. Instructions come 
 
 ## Part 1: The Prefix
 
-The prefix is built once, in `build_prefix()`, which is called from `__init__`. It is stored as `self.prefix` and never rebuilt. Every model call across the entire session uses the identical prefix string.
+The prefix is built by `build_prefix()`, which is called from `__init__` and
+stored as `self.prefix`. In most sessions the prefix is static — every model
+call across the entire session uses the identical string.
 
-This is an important design choice. Local models like `qwen3.5:4b` have limited and somewhat inconsistent instruction-following. A static prefix means the model sees exactly the same rules, tool schemas, and examples every time. There is no drift in phrasing across turns, which reduces the chance that a slight rephrasing on turn 4 causes the model to interpret a rule differently than it did on turn 1.
+There is one exception: the `/forget` REPL command deletes `AGENT_MEMORY.md`
+and immediately calls `build_prefix()` again to produce a prefix without the
+persistent memory section. This is the only time the prefix is rebuilt mid-session.
 
-The prefix has four subsections:
+This near-static design is intentional. Local models like `qwen3.5:4b` have
+limited and somewhat inconsistent instruction-following. A stable prefix means
+the model sees exactly the same rules, tool schemas, and examples every time.
+There is no drift in phrasing across turns, which reduces the chance that a
+slight rephrasing on turn 4 causes the model to interpret a rule differently
+than it did on turn 1.
+
+The prefix has up to six subsections, depending on configuration:
+
+The first two subsections (identity/rules and persistent memory) are always present if applicable; the rest follow in fixed order.
 
 ### Agent identity and rules
 
@@ -83,6 +96,36 @@ Rules:
 ```
 
 The identity line anchors the model's role. The rules section follows immediately and is listed below in full with commentary.
+
+### Persistent memory (conditional)
+
+If `AGENT_MEMORY.md` exists in the workspace root, its contents are injected
+immediately after the identity/rules block:
+
+```
+Persistent memory (from AGENT_MEMORY.md):
+- 2026-04-05: this project uses black for formatting
+- 2026-04-05: all API endpoints require JWT authentication
+```
+
+This section is omitted entirely when the file does not exist. The model can
+add notes to this file using the `update_memory` tool; the notes then appear
+here in every subsequent session without user repetition.
+
+### Planning rule (conditional)
+
+When the agent is started with `--plan`, one additional rule is appended to
+the rules section:
+
+```
+Before using any tools, emit a numbered <plan>...</plan> block listing the
+steps you intend to take. Wait for user confirmation before proceeding.
+```
+
+This rule is absent by default. It instructs the model to reason through its
+approach before acting, and the `parse()` function looks for the `<plan>` tag
+as a dedicated response kind. See `agent-loop.md` for how plan responses are
+handled.
 
 ### Tool catalog
 
@@ -395,7 +438,7 @@ Local models typically have effective context windows of 4,000 to 8,000 tokens. 
 | Section | Approximate characters | Approximate tokens |
 |---------|----------------------|-------------------|
 | Part 1: Agent identity + rules | ~700 | ~175 |
-| Part 1: Tool catalog (7 tools) | ~500 | ~125 |
+| Part 1: Tool catalog (8 tools) | ~560 | ~140 |
 | Part 1: Response examples (6 examples) | ~500 | ~125 |
 | Part 1: Workspace snapshot (git + 1 doc) | ~1,200 | ~300 |
 | **Part 1 total (prefix)** | **~2,900** | **~725** |

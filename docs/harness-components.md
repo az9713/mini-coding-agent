@@ -9,14 +9,14 @@ legible.
 
 ## Component Map
 
-| # | Name | Primary symbols | Lines |
+| # | Name | Primary symbols | Notes |
 |---|------|----------------|-------|
-| 1 | Live Repo Context | `WorkspaceContext`, `WorkspaceContext.build`, `WorkspaceContext.text` | 77-144 |
-| 2 | Prompt Shape and Cache Reuse | `build_prefix`, `memory_text`, `prompt` | 337-443 |
-| 3 | Structured Tools, Validation, and Permissions | `build_tools`, `run_tool`, `validate_tool`, `approve`, `parse`, `parse_xml_tool`, `path`, `repeated_tool_call` | 286-332, 511-697, 737-743 |
-| 4 | Context Reduction and Output Management | `clip`, `middle`, `history_text`, `MAX_TOOL_OUTPUT`, `MAX_HISTORY` | 36-37, 56-71, 401-425 |
-| 5 | Transcripts, Memory, and Resumption | `SessionStore`, `record`, `note_tool`, `remember`, `ask`, `reset` | 150-168, 253-259, 274-280, 448-506, 732-735 |
-| 6 | Delegation and Bounded Subagents | `tool_delegate`, conditional in `build_tools`, `validate_tool("delegate")` | 325-332, 609-614, 850-869 |
+| 1 | Live Repo Context | `WorkspaceContext`, `WorkspaceContext.build`, `WorkspaceContext.text` | Reads git state and project docs at startup |
+| 2 | Prompt Shape and Cache Reuse | `build_prefix`, `memory_text`, `prompt`, `plan_mode`, `forget_persistent_memory` | Prefix rebuilt on `/forget`; plan rule injected when `--plan` |
+| 3 | Structured Tools, Validation, and Permissions | `build_tools`, `run_tool`, `validate_tool`, `approve`, `parse`, `parse_xml_tool`, `path`, `repeated_tool_call` | Eight tools; `parse()` now handles four response kinds including `"plan"` |
+| 4 | Context Reduction and Output Management | `clip`, `middle`, `history_text`, `MAX_TOOL_OUTPUT`, `MAX_HISTORY` | Unchanged |
+| 5 | Transcripts, Memory, and Resumption | `SessionStore`, `CheckpointStore`, `record`, `note_tool`, `remember`, `ask`, `reset`, `tool_update_memory` | Persistent memory via `AGENT_MEMORY.md`; checkpoints for `/rewind`/`/diff` |
+| 6 | Delegation and Bounded Subagents | `tool_delegate`, conditional in `build_tools`, `validate_tool("delegate")` | Child agents always receive `checkpoint_store=None` |
 
 ---
 
