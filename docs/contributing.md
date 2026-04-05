@@ -92,6 +92,8 @@ Key points:
 
 - `tmp_path` is a pytest built-in fixture that supplies a fresh temporary directory for each test. Files written during the test are automatically cleaned up afterwards.
 - `approval_policy` defaults to `"auto"` so tests never pause waiting for keyboard input.
+- `verbose` defaults to `False` in tests so token streaming does not pollute test output. Pass `verbose=True` only when testing streaming behaviour itself.
+- `auto_verify` defaults to `False` in tests. Pass `auto_verify=True` only when testing the auto-verify feature — otherwise every `write_file` or `patch_file` call will trigger a test-suite run and slow the suite down.
 - Extra keyword arguments (e.g. `max_steps=3`) are forwarded to `MiniAgent`.
 
 ### How Outputs Map to Agent Steps

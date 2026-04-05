@@ -82,11 +82,13 @@ Every user message travels top-to-bottom through this diagram:
 1. The workspace snapshot (component 1) is baked into the static prefix
    (component 2) at startup.
 2. Each turn, `prompt()` assembles the static prefix plus dynamic memory and
-   history and sends the result to Ollama.
+   history and sends the result to Ollama. With `verbose=True`, tokens are
+   printed as they arrive via the `on_token` streaming callback.
 3. The model response is parsed (component 3) into a tool call or a final
    answer.
 4. If it is a tool call, the tool output is clipped (component 4) and
-   appended to the session (component 5).
+   appended to the session (component 5). With `--auto-verify`, file-writing
+   tools also run the project's test suite and append the result.
 5. If delegation is requested, a child agent is spawned (component 6) and its
    result is returned as a tool output.
 

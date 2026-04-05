@@ -224,6 +224,26 @@ Important flags:
   controls sampling randomness; default: `0.2`
 - `--top-p`
   controls nucleus sampling for generation; default: `0.9`
+- `--auto-verify`
+  run the project's test suite automatically after every file write or patch; default: disabled
+
+&nbsp;
+## Streaming Output
+
+Tokens stream to the terminal as the model generates them — no more staring at a blank screen. The model's tool calls and final answer appear in real time. This is on by default in the REPL and one-shot mode.
+
+Child agents spawned via `delegate` are always silent to keep the output clean.
+
+&nbsp;
+## Auto-Verify Tests
+
+Use `--auto-verify` to automatically run your project's tests after every file write or patch:
+
+```bash
+uv run mini-coding-agent --approval auto --auto-verify
+```
+
+The agent detects test commands from `pyproject.toml` (pytest), `package.json` (npm test), or `Makefile` (make test). Test results are appended to the tool output so the model sees failures immediately and can fix them in the next step.
 
 &nbsp;
 ## Example

@@ -403,6 +403,78 @@ suppresses noise, not access.
 
 ---
 
+## Why Streaming Output?
+
+Before streaming, `OllamaModelClient.complete()` set `"stream": false` and
+called `response.read()` once, blocking until the entire response arrived.
+For a 4B parameter model on CPU, a single step could take 20–40 seconds of
+blank terminal. Users had no indication whether the agent was working or hung.
+
+The streaming change is minimal — one `on_token` callback parameter:
+
+```python
+def complete(self, prompt, max_new_tokens, on_token=None):
+    streaming = on_token is not None
+    payload = {..., "stream": streaming, ...}
+    if streaming:
+        for line in response:
+            token = json.loads(line)["response"]
+            on_token(token)
+            tokens.append(token)
+        return "".join(tokens)
+```
+
+**Why a callback rather than always printing?** Child agents (spawned by
+`delegate`) should not print to the user's terminal — their output would
+interleave with the parent agent's output and confuse the display. Passing
+`on_token=None` for child agents (`verbose=False`) keeps them silent without
+changing their `complete()` call signature. The root agent passes a `print`
+callback; child agents pass nothing.
+
+**Why not suppress `<tool>` and `<final>` tags in the stream?** Stripping
+tags in real time requires buffering partial tag matches and detecting tag
+boundaries character by character — significant complexity for cosmetic gain.
+The raw stream is informative: the user sees exactly what the model decided
+to do. Tag visibility is a minor cost.
+
+---
+
+## Why Auto-Verify?
+
+Without auto-verify, the model writes a file, declares success, and the user
+discovers whether it works only by manually running tests. The model never
+sees test output unless the user explicitly asks it to run tests — an extra
+turn that costs time and burns the step budget.
+
+With `--auto-verify`, the test result is appended to the tool output
+automatically:
+
+```python
+if name in {"write_file", "patch_file"} and self.auto_verify:
+    verify = self._auto_verify()
+    if verify:
+        result = f"{result}\n\nauto-verify:\n{verify}"
+```
+
+The model sees `tests FAILED (exit 1): AssertionError ...` in the same turn
+as the write and can take corrective action immediately. This eliminates an
+entire class of "write → ask user → fix" round-trips.
+
+**Why detect the test command rather than require a flag?** Asking users to
+specify `--test-command "uv run pytest -q"` adds friction. Most projects
+follow one of three conventions: `pyproject.toml` with pytest, `package.json`
+with a test script, or `Makefile` with a `test` target. `detect_test_command()`
+covers all three with a handful of lines and silently skips detection if none
+matches — zero friction for projects that don't use these conventions.
+
+**Why not run tests after `run_shell` too?** `run_shell` is general-purpose.
+Running tests after every shell command would cause infinite loops when the
+agent runs the test command itself via `run_shell`. Scoping auto-verify to
+`write_file` and `patch_file` — the two tools that modify source files —
+is precise and safe.
+
+---
+
 ## Why Checkpointing? (File Undo and Diff)
 
 Before checkpointing, approving a `write_file` or `patch_file` call was

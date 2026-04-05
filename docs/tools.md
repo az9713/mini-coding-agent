@@ -604,6 +604,21 @@ error: invalid arguments for write_file: missing content
 example: <tool name="write_file" path="binary_search.py"><content>...</content></tool>
 ```
 
+### Auto-verify
+
+When the agent is launched with `--auto-verify`, `write_file` automatically runs the project's test suite after a successful write. The test command is detected from `pyproject.toml` (pytest), `package.json` (npm test), or `Makefile` (make test). The result is appended to the tool output:
+
+```
+wrote src/utils.py (412 chars)
+
+auto-verify:
+tests passed (exit 0):
+.................
+17 passed in 0.42s
+```
+
+If tests fail, `passed` becomes `FAILED` and the full output is shown to the model so it can correct the code without an extra user turn. If no test command is detectable, the section is omitted silently.
+
 ---
 
 ## `patch_file`
@@ -731,6 +746,10 @@ example: <tool name="patch_file" path="binary_search.py"><old_text>return -1</ol
 > constructed the string from memory rather than copying it verbatim from a
 > `read_file` result. Always copy `old_text` directly from a recent
 > `read_file` output.
+
+### Auto-verify
+
+When the agent is launched with `--auto-verify`, `patch_file` automatically runs the project's test suite after a successful patch. Behaviour is identical to `write_file` auto-verify: test command detected from project files, result appended to tool output, 60-second timeout. See the `write_file` section above for the full output format.
 
 ---
 

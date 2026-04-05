@@ -41,6 +41,7 @@ uv run mini-coding-agent "list all Python files in src/"
 | `--max-new-tokens` | int | `512` | Maximum tokens the model may produce in a single generation call. |
 | `--temperature` | float | `0.2` | Sampling temperature passed to Ollama. Lower values produce more deterministic output. |
 | `--top-p` | float | `0.9` | Nucleus sampling probability mass passed to Ollama. |
+| `--auto-verify` | flag | `false` | After every successful `write_file` or `patch_file`, detect the project's test command and run it. Test output is appended to the tool result so the model sees pass/fail immediately. |
 
 ---
 
@@ -109,6 +110,41 @@ Controls how the agent handles **risky tools** — tools that write to disk, exe
 | `never` | Risky tools always fail with `error: approval denied`. Use for read-only auditing — the agent can read and list files but cannot modify anything. |
 
 Read-only tools (such as `read_file` and `list_files`) are never gated by the approval policy.
+
+### `--auto-verify`
+
+**Type:** flag | **Default:** `false`
+
+When set, the agent automatically runs the project's test suite after every successful `write_file` or `patch_file` call. The test command is detected from project configuration files in the following order:
+
+| File | Condition | Command used |
+|------|-----------|--------------|
+| `pyproject.toml` | Contains the string `pytest` | `uv run pytest -q` (or `python -m pytest -q` if `uv` is absent) |
+| `package.json` | Has a `scripts.test` key | `npm test` |
+| `Makefile` | Has a `test:` target | `make test` |
+
+If no matching file is found, the check is silently skipped — no error is returned.
+
+Test output is appended to the tool result with this format:
+
+```
+wrote src/utils.py (412 chars)
+
+auto-verify:
+tests passed (exit 0):
+.................
+17 passed in 0.42s
+```
+
+If tests fail, `passed` becomes `FAILED` and the full test output is shown to the model, allowing it to read the error messages and take corrective action in the next step without the user needing to ask.
+
+The test command runs with a **60-second timeout**. If it exceeds that, the output reads `test command timed out after 60s`.
+
+Recommended combination:
+
+```bash
+uv run mini-coding-agent --approval auto --auto-verify "add error handling to parse_csv in utils.py"
+```
 
 ### `--max-steps`
 
@@ -184,6 +220,9 @@ uv run mini-coding-agent "list all .py files" | grep test
 
 # Target a specific project directory
 uv run mini-coding-agent --cwd /projects/myapp --approval auto "add type hints to helpers.py"
+
+# Auto-verify: run tests after every file write
+uv run mini-coding-agent --approval auto --auto-verify "refactor utils.py"
 ```
 
 > **Note:** Because one-shot mode exits after a single request, `--resume` is most useful here — it lets you continue building on previous session context without starting a REPL.
