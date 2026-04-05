@@ -649,6 +649,8 @@ class MiniAgent:
                 if self.verbose:
                     print(f"[{name}]")
                 result = self.run_tool(name, args)
+                if self.verbose and "\n\nauto-verify:\n" in result:
+                    print(result[result.index("\n\nauto-verify:\n") + 2:])
                 self.record(
                     {
                         "role": "tool",
