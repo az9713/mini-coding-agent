@@ -171,8 +171,16 @@ being sent to the model as a normal task.
   prints the distilled session memory, including the current task, tracked files, and notes
 - `/session`
   prints the path to the current saved session JSON file
+- `/rewind`
+  reverts all file changes the agent made in the most recent turn; use before `/exit` to undo a bad edit
+- `/rewind N`
+  reverts file changes from turn number N specifically
+- `/diff`
+  shows a unified diff of all file changes the agent has made this session
+- `/diff N`
+  shows a unified diff of file changes from turn N only
 - `/reset`
-  clears the current session history and distilled memory but keeps you in the REPL
+  clears the current session history, distilled memory, and checkpoint data but keeps you in the REPL
 - `/exit`
   exits the interactive session
 - `/quit`
