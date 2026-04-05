@@ -229,6 +229,24 @@ mini-coding-agent> /exit
 
 ---
 
+## Understanding repeated lines in the output
+
+You may see the same tool call printed two or three times before a `[tool_name]`
+bracket appears. This is normal. Because tokens stream to the terminal as the
+model generates them, every attempt is printed before the agent validates it.
+A failed attempt is rejected silently, a retry notice is sent to the model,
+and the model tries again — each attempt appearing as another line.
+
+Only calls followed by a `[tool_name]` bracket actually executed. Everything
+else was a failed attempt absorbed by the retry budget.
+
+This happens most often with `patch_file` on a 4b model because the XML
+escaping is error-prone. If you see many retries, try a larger model with
+`--model qwen3.5:9b`. For a full explanation with a worked example, see
+`agent-loop.md` — "What retries look like in the terminal".
+
+---
+
 ## Summary
 
 | Feature | Command | Pass condition |

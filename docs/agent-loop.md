@@ -207,6 +207,45 @@ if kind == "retry":
 
 The notice is a lightweight self-healing mechanism. It does not require any external intervention — the model sees its "mistake" and the expected correction format, and the next iteration begins.
 
+### What retries look like in the terminal
+
+Because the agent streams tokens to the terminal as the model generates them, every attempt — including failed ones — is printed before the agent has a chance to validate it. A session with several retries looks like this:
+
+```
+mini-coding-agent> add a shout() function to hello.py that returns the greeting in uppercase
+
+<tool>{"name":"read_file","path":"hello.py","start":1,"end":50}</tool>
+[read_file]
+<tool>{"name":"read_file","args":{"path":"hello.py","start":1,"end":50}}</tool>
+[read_file]
+<tool name="patch_file" path="hello.py" old_text="def greet(name):\n    return f\"Hello, {name}!\"" new_text="def greet(name):\n    return f\"Hello, {name}!\"\n\ndef shout(text):\n    return text.upper()"</tool>
+<tool name="patch_file" path="hello.py" old_text="def greet(name):\n    return f\"Hello, {name}!\"" new_text="def greet(name):\n    return f\"Hello, {name}!\"\n\ndef shout(text):\n    return text.upper()"</tool>
+<tool name="patch_file" path="hello.py" old_text="def greet(name):\n    return f\"Hello, {name}!\"" new_text="def greet(name):\n    return f\"Hello, {name}!\"\n\ndef shout(name):\n    return f\"HELLO, {name}!\""</tool>
+<tool name="write_file" path="hello.py"><content>
+def greet(name):
+    return f"Hello, {name}!"
+
+def shout(name):
+    return f"HELLO, {name}!"
+</content></tool>
+[write_file]
+auto-verify:
+tests passed (exit 0):
+.
+1 passed in 0.01s
+<final>Done.</final>
+```
+
+What happened step by step:
+
+1. The first `read_file` call used the wrong format (missing `"args"` wrapper) — streamed to terminal, rejected by `parse()`, retry notice sent to model.
+2. The model corrected the format on the second attempt — `[read_file]` confirms it executed.
+3. The model tried `patch_file` three times. The first two were malformed XML (unclosed tag, wrong escaping) — each streamed to the terminal before the agent could validate them. The third was rejected because `old_text` did not match exactly.
+4. The model switched strategy and used `write_file` instead — this succeeded, triggering `auto-verify`.
+5. All tests passed; the model returned `<final>Done.</final>`.
+
+Only calls followed by a `[tool_name]` bracket actually executed. Everything else was a failed attempt absorbed by the retry budget. This is normal behavior for a 4b model — larger models like `qwen3.5:9b` produce fewer retries because they follow the format more reliably.
+
 ---
 
 ## Format Flexibility
