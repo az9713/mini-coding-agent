@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 DOC_NAMES = ("AGENTS.md", "README.md", "pyproject.toml", "package.json")
-HELP_TEXT = "/help, /memory, /session, /rewind, /diff, /reset, /exit"
+HELP_TEXT = "/help, /memory, /session, /rewind, /diff, /forget, /reset, /exit"
 WELCOME_ART = (
     "/\\     /\\\\",
     "{  `---'  }",
@@ -34,6 +34,7 @@ HELP_DETAILS = textwrap.dedent(
     /rewind N  Revert file changes from turn N.
     /diff      Show unified diff of all agent file changes this session.
     /diff N    Show unified diff of file changes from turn N.
+    /forget    Clear persistent memory (deletes AGENT_MEMORY.md).
     /reset     Clear the current session history and memory.
     /exit      Exit the agent.
     """
@@ -942,6 +943,13 @@ class MiniAgent:
             return text[start:]
         return text[start:end]
 
+    def forget_persistent_memory(self):
+        """Delete AGENT_MEMORY.md if present and rebuild prefix."""
+        mem_path = self.root / "AGENT_MEMORY.md"
+        if mem_path.is_file():
+            mem_path.unlink()
+        self.prefix = self.build_prefix()
+
     def _confirm_plan(self):
         if self.approval_policy == "auto":
             return True
@@ -1256,6 +1264,11 @@ def main(argv=None):
         if user_input == "/session":
             print(agent.session_path)
             continue
+        if user_input == "/forget":
+            agent.forget_persistent_memory()
+            print("persistent memory cleared")
+            continue
+
         if user_input == "/reset":
             agent.reset()
             print("session reset")

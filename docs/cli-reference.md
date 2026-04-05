@@ -42,6 +42,7 @@ uv run mini-coding-agent "list all Python files in src/"
 | `--temperature` | float | `0.2` | Sampling temperature passed to Ollama. Lower values produce more deterministic output. |
 | `--top-p` | float | `0.9` | Nucleus sampling probability mass passed to Ollama. |
 | `--auto-verify` | flag | `false` | After every successful `write_file` or `patch_file`, detect the project's test command and run it. Test output is appended to the tool result so the model sees pass/fail immediately. |
+| `--plan` | flag | `false` | Before using any tools, require the model to emit a numbered `<plan>` block and wait for user confirmation. |
 
 ---
 
@@ -146,6 +147,28 @@ Recommended combination:
 uv run mini-coding-agent --approval auto --auto-verify "add error handling to parse_csv in utils.py"
 ```
 
+### `--plan`
+
+**Type:** flag | **Default:** `false`
+
+When set, the agent injects a planning rule into its system prompt instructing the model to respond to any multi-step task with a `<plan>` block before using any tools:
+
+```
+<plan>
+1. Read hello.py to understand current structure
+2. Patch the function signature
+3. Run tests to confirm
+</plan>
+```
+
+The agent displays the plan and prompts for confirmation (respecting `--approval`):
+
+- `--approval ask` (default): asks `execute plan? [Y/n]`
+- `--approval auto`: approves immediately without prompting
+- `--approval never`: rejects the plan immediately; returns `"Plan cancelled."`
+
+Once approved, the plan is injected into conversation history so the model knows to proceed with tool execution. The plan step does **not** count against `--max-steps`.
+
 ### `--max-steps`
 
 **Type:** int | **Default:** `6`
@@ -191,6 +214,7 @@ When the agent is started without a positional `PROMPT`, it enters an interactiv
 | `/rewind N` | Revert file changes from turn number N specifically. Turn numbers start at 1. |
 | `/diff` | Show a unified diff of all file changes the agent has made across all turns in this session. |
 | `/diff N` | Show a unified diff of file changes from turn N only. |
+| `/forget` | Delete `AGENT_MEMORY.md` from the workspace root, clearing all persistent memory. The system prompt is rebuilt immediately so the deleted content no longer reaches the model. |
 | `/reset` | Clear conversation history and working memory while keeping the same session file and REPL process alive. Also clears all checkpoint data. Useful when you want to start a fresh task without restarting the process. |
 | `/exit` | Exit the REPL cleanly (exit code `0`). |
 | `/quit` | Alias for `/exit`. |

@@ -525,3 +525,80 @@ unconditionally read-only (`read_only=True`). They cannot call `write_file` or
 `patch_file`, so `snapshot()` would never be called. Passing `None` makes the
 invariant explicit and avoids allocating an on-disk file for a child that will
 never write anything.
+
+---
+
+## Why Structured Planning? (`--plan`)
+
+When a user submits a complex task, the model may plunge straight into tool
+calls without a coherent strategy. The result can be a sequence of
+semi-related edits that partially solve the problem, leaving the user with
+no clear picture of what was attempted and no easy way to object before work
+begins.
+
+The `--plan` flag adds a pre-execution phase: the model must emit a `<plan>`
+block listing the intended steps before using any tools. The user sees the
+plan and approves or cancels it — identical UX to the existing risky-tool
+approval gate. Once approved, the plan is injected into the conversation
+history so the model sees it as context for every subsequent tool step.
+
+**Why a new response kind rather than a tool?** A tool call would be
+symmetric with `run_shell` or `write_file` and would consume a tool step.
+The plan is conceptually different: it is a negotiation, not an action. It
+should not eat into `--max-steps`, which are budgeted for actual work. A
+fourth parse kind (`"plan"`) makes the distinction explicit in the loop.
+
+**Why inject the approved plan into history rather than just continuing?**
+Without the injection, the model would not know the plan was approved on the
+next call. It might re-emit the plan, thinking it had not been reviewed yet.
+The approval message (`"Plan approved: ...\nProceed with execution."`) serves
+as a positive confirmation that the model can reference while executing steps.
+
+**Why respect `approval_policy` for plans too?** Plans are a user-facing
+checkpoint. With `--approval auto` (typically used in scripted pipelines),
+blocking for plan confirmation defeats the purpose. The same three-way policy
+— `ask` / `auto` / `never` — provides a consistent mental model across all
+confirmation points in the agent.
+
+---
+
+## Why Persistent Agent Memory? (`update_memory` / `AGENT_MEMORY.md`)
+
+The distilled session memory (`memory["task"]`, `memory["files"]`,
+`memory["notes"]`) is volatile: it resets when the session resets and vanishes
+between sessions. Users working on the same codebase across multiple sessions
+repeatedly re-explain context the agent already encountered — preferred
+formatter, testing conventions, project quirks. This is friction that
+accumulates over time.
+
+`AGENT_MEMORY.md` is the solution: a plain Markdown file in the workspace
+root that the model can write to via `update_memory(note)` and that
+`build_prefix()` injects into the system prompt on every startup. The model
+sees its own past observations without the user needing to repeat them.
+
+**Why store it in the workspace root, not `.mini-coding-agent/`?** The
+workspace root is version-controllable. A team sharing the same repository can
+commit `AGENT_MEMORY.md` so every developer's agent instance benefits from
+observations made by others. Storing it in the hidden dot-directory would
+make it invisible and exclude it from git by default.
+
+**Why plain Markdown instead of JSON?** The file is meant to be
+human-readable and human-editable. A user who wants to remove an outdated
+note, add a constraint, or review what the agent has learned can open the file
+in any editor. Structured formats add no value here; the model reads the
+content as natural language regardless.
+
+**Why not update the prefix after every `update_memory` call in the same
+session?** The prefix is built once at startup for cache-reuse reasons. New
+notes added during a session are visible via `memory["notes"]` for the
+remainder of that session. They become part of the prefix on the next session
+start, when `build_prefix()` is called fresh. The slight delay is acceptable
+given the cache benefit.
+
+**Why `/forget` instead of a tool?** Clearing the entire memory file is a
+destructive, irreversible action better suited to an explicit user command than
+a model-initiated tool call. A model should never spontaneously decide to
+delete all its own memory; only the user should be able to do that. REPL
+commands are user-only; tools are model-callable. The distinction enforces the
+correct boundary.
+

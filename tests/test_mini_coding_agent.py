@@ -828,6 +828,39 @@ def test_persistent_memory_visible_to_new_agent_instance(tmp_path):
     assert "always use type hints" in agent2.prefix
 
 
+def test_forget_clears_agent_memory_file(tmp_path):
+    """/forget deletes AGENT_MEMORY.md and removes its content from the prefix."""
+    mem_file = tmp_path / "AGENT_MEMORY.md"
+    mem_file.write_text("- [2026-01-01] some note\n", encoding="utf-8")
+    agent = build_agent(tmp_path, [])
+    agent.forget_persistent_memory()
+    assert not mem_file.exists()
+    assert "Persistent memory (from AGENT_MEMORY.md)" not in agent.prefix
+
+
+def test_forget_is_noop_when_no_file(tmp_path):
+    """/forget does not raise when AGENT_MEMORY.md does not exist."""
+    agent = build_agent(tmp_path, [])
+    agent.forget_persistent_memory()  # must not raise
+
+
+def test_end_to_end_update_memory_then_read_in_next_session(tmp_path):
+    """Full flow: model calls update_memory, second agent sees it in prefix."""
+    agent = build_agent(
+        tmp_path,
+        [
+            '<tool>{"name":"update_memory","args":{"note":"always write docstrings"}}</tool>',
+            "<final>Memory saved.</final>",
+        ],
+        approval_policy="auto",
+    )
+    answer = agent.ask("remember to always write docstrings")
+    assert answer == "Memory saved."
+
+    agent2 = build_agent(tmp_path, [])
+    assert "always write docstrings" in agent2.prefix
+
+
 def test_plan_does_not_consume_tool_step_budget(tmp_path):
     """A <plan> response does not count against max_steps.
 

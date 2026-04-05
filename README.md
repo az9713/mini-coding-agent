@@ -179,6 +179,8 @@ being sent to the model as a normal task.
   shows a unified diff of all file changes the agent has made this session
 - `/diff N`
   shows a unified diff of file changes from turn N only
+- `/forget`
+  deletes `AGENT_MEMORY.md` from the workspace, clearing all persistent memory
 - `/reset`
   clears the current session history, distilled memory, and checkpoint data but keeps you in the REPL
 - `/exit`
@@ -226,6 +228,8 @@ Important flags:
   controls nucleus sampling for generation; default: `0.9`
 - `--auto-verify`
   run the project's test suite automatically after every file write or patch; default: disabled
+- `--plan`
+  require the model to emit a numbered plan before using any tools, with user confirmation; default: disabled
 
 &nbsp;
 ## Streaming Output
@@ -244,6 +248,47 @@ uv run mini-coding-agent --approval auto --auto-verify
 ```
 
 The agent detects test commands from `pyproject.toml` (pytest), `package.json` (npm test), or `Makefile` (make test). Test results are appended to the tool output so the model sees failures immediately and can fix them in the next step.
+
+&nbsp;
+## Structured Planning
+
+Use `--plan` to require the model to think before acting:
+
+```bash
+uv run mini-coding-agent --plan --approval ask
+```
+
+On each request the model first emits a numbered plan:
+
+```
+Proposed plan:
+1. Read src/utils.py to understand current structure
+2. Patch the function to add error handling
+3. Run tests to confirm
+
+execute plan? [Y/n]
+```
+
+Type `y` to proceed, `n` to cancel. With `--approval auto` the plan is approved silently. The plan step never counts against `--max-steps`.
+
+&nbsp;
+## Persistent Agent Memory
+
+The agent can remember facts across sessions. Ask it to save something:
+
+```
+mini-coding-agent> remember that this project uses black for formatting
+```
+
+The model calls `update_memory(...)`, which appends a dated bullet to `AGENT_MEMORY.md` in the workspace root. On every subsequent session that file is injected into the system prompt automatically — the model sees it without you having to repeat yourself.
+
+Clear all persistent memory:
+
+```
+mini-coding-agent> /forget
+```
+
+`AGENT_MEMORY.md` is plain Markdown — you can edit it by hand at any time.
 
 &nbsp;
 ## Example

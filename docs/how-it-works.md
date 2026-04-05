@@ -208,6 +208,17 @@ hardware-level caching, a consistent prefix layout helps
 instruction-following models: the rules and tools are always at the same
 position, so the model learns where to look.
 
+Two optional additions can appear at the end of the prefix:
+
+- **Persistent memory** (`AGENT_MEMORY.md`): If `AGENT_MEMORY.md` exists in
+  the workspace root, its contents are injected as a `Persistent memory`
+  section. The model can write new entries with `update_memory(note)`; the
+  file survives `/reset` and new sessions.
+- **Plan rule**: If `plan_mode=True` (set by `--plan`), an additional rule
+  is appended instructing the model to emit a `<plan>` block listing numbered
+  steps before using any tools. The plan must be confirmed before execution
+  begins; the `<plan>` step does not count against `--max-steps`.
+
 ### Dynamic sections
 
 `memory_text()` returns the current task, file list, and notes as a compact
@@ -258,10 +269,13 @@ the agent is not already at maximum delegation depth.
 | `run_shell` | **risky** | `command`, `timeout` | `timeout=20` |
 | `write_file` | **risky** | `path`, `content` | — |
 | `patch_file` | **risky** | `path`, `old_text`, `new_text` | — |
+| `update_memory` | safe | `note` | — |
 | `delegate` | safe | `task`, `max_steps` | `max_steps=3` |
 
 `delegate` is absent when `self.depth >= self.max_depth`, which prevents
-infinite recursion. All other tools are always available.
+infinite recursion. `update_memory` appends a dated bullet to `AGENT_MEMORY.md`
+in the workspace root; the file is read back into the prefix on the next session
+start. All other tools are always available.
 
 ### Two-phase execution
 
@@ -310,6 +324,11 @@ tool calls differently.
 
 ```
 Raw model output
+      |
+      +-- contains "<plan>" (before any "<tool>") ?
+      |         |
+      |         +-- non-empty body -> ("plan", plan_text)
+      |         +-- empty body     -> ("retry", notice)
       |
       +-- contains "<tool>" ?
       |         |
