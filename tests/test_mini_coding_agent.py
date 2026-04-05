@@ -2,6 +2,7 @@ import json
 from unittest.mock import patch
 
 from mini_coding_agent import (
+    CheckpointStore,
     FakeModelClient,
     MiniAgent,
     OllamaModelClient,
@@ -18,12 +19,15 @@ def build_workspace(tmp_path):
 
 def build_agent(tmp_path, outputs, **kwargs):
     workspace = build_workspace(tmp_path)
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    agent_dir = tmp_path / ".mini-coding-agent"
+    store = SessionStore(agent_dir / "sessions")
+    checkpoint_store = CheckpointStore(agent_dir / "checkpoints")
     approval_policy = kwargs.pop("approval_policy", "auto")
     return MiniAgent(
         model_client=FakeModelClient(outputs),
         workspace=workspace,
         session_store=store,
+        checkpoint_store=checkpoint_store,
         approval_policy=approval_policy,
         **kwargs,
     )
@@ -257,3 +261,152 @@ def test_ollama_client_posts_expected_payload():
     assert captured["body"]["raw"] is False
     assert captured["body"]["think"] is False
     assert captured["body"]["options"]["num_predict"] == 42
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint tests
+# ---------------------------------------------------------------------------
+
+def test_checkpoint_and_rewind_write_file(tmp_path):
+    """write_file snapshots original; rewind restores it."""
+    (tmp_path / "hello.txt").write_text("original\n", encoding="utf-8")
+    agent = build_agent(
+        tmp_path,
+        [
+            '<tool name="write_file" path="hello.txt"><content>modified\n</content></tool>',
+            "<final>Done.</final>",
+        ],
+    )
+    agent.ask("Overwrite hello.txt")
+    assert (tmp_path / "hello.txt").read_text(encoding="utf-8") == "modified\n"
+
+    results = agent.checkpoint_store.rewind(1)
+    assert results is not None
+    assert (tmp_path / "hello.txt").read_text(encoding="utf-8") == "original\n"
+    assert any(action == "restored" for _, action in results)
+
+
+def test_rewind_deletes_new_file(tmp_path):
+    """Rewinding a write_file that created a new file deletes it."""
+    agent = build_agent(
+        tmp_path,
+        [
+            '<tool name="write_file" path="brand_new.py"><content>print("hi")\n</content></tool>',
+            "<final>Done.</final>",
+        ],
+    )
+    agent.ask("Create brand_new.py")
+    assert (tmp_path / "brand_new.py").exists()
+
+    results = agent.checkpoint_store.rewind(1)
+    assert results is not None
+    assert not (tmp_path / "brand_new.py").exists()
+    assert any(action == "deleted" for _, action in results)
+
+
+def test_checkpoint_and_rewind_patch_file(tmp_path):
+    """patch_file snapshots original; rewind restores it."""
+    (tmp_path / "sample.txt").write_text("hello world\n", encoding="utf-8")
+    agent = build_agent(
+        tmp_path,
+        [
+            '<tool>{"name":"patch_file","args":{"path":"sample.txt","old_text":"world","new_text":"agent"}}</tool>',
+            "<final>Done.</final>",
+        ],
+    )
+    agent.ask("Patch sample.txt")
+    assert (tmp_path / "sample.txt").read_text(encoding="utf-8") == "hello agent\n"
+
+    results = agent.checkpoint_store.rewind(1)
+    assert results is not None
+    assert (tmp_path / "sample.txt").read_text(encoding="utf-8") == "hello world\n"
+
+
+def test_no_duplicate_snapshots(tmp_path):
+    """Same file written twice in one turn: checkpoint holds the very first state."""
+    (tmp_path / "hello.txt").write_text("v1\n", encoding="utf-8")
+    agent = build_agent(
+        tmp_path,
+        [
+            '<tool name="write_file" path="hello.txt"><content>v2\n</content></tool>',
+            '<tool name="write_file" path="hello.txt"><content>v3\n</content></tool>',
+            "<final>Done.</final>",
+        ],
+    )
+    agent.ask("Write hello.txt twice")
+    assert (tmp_path / "hello.txt").read_text(encoding="utf-8") == "v3\n"
+
+    # Checkpoint must hold the original v1, not the intermediate v2
+    path_key = str((tmp_path / "hello.txt").resolve())
+    assert agent.checkpoint_store._data[1][path_key] == "v1\n"
+
+    # Rewind should restore to v1
+    agent.checkpoint_store.rewind(1)
+    assert (tmp_path / "hello.txt").read_text(encoding="utf-8") == "v1\n"
+
+
+def test_double_rewind_is_noop(tmp_path):
+    """Rewinding the same turn twice: second call returns None."""
+    (tmp_path / "hello.txt").write_text("original\n", encoding="utf-8")
+    agent = build_agent(
+        tmp_path,
+        [
+            '<tool name="write_file" path="hello.txt"><content>changed\n</content></tool>',
+            "<final>Done.</final>",
+        ],
+    )
+    agent.ask("Edit hello.txt")
+    agent.checkpoint_store.rewind(1)
+    assert (tmp_path / "hello.txt").read_text(encoding="utf-8") == "original\n"
+
+    result = agent.checkpoint_store.rewind(1)
+    assert result is None  # turn data was deleted after first rewind
+
+
+def test_diff_shows_changes(tmp_path):
+    """diff() returns a unified diff containing the added line."""
+    (tmp_path / "hello.txt").write_text("line1\n", encoding="utf-8")
+    agent = build_agent(
+        tmp_path,
+        [
+            '<tool name="write_file" path="hello.txt"><content>line1\nline2\n</content></tool>',
+            "<final>Done.</final>",
+        ],
+    )
+    agent.ask("Add a line")
+    diff = agent.checkpoint_store.diff(1, str(tmp_path))
+    assert diff is not None
+    assert "+line2" in diff
+    assert "hello.txt" in diff
+
+
+def test_checkpoints_survive_resume(tmp_path):
+    """Checkpoint data persists on disk and is loadable by a resumed agent."""
+    (tmp_path / "hello.txt").write_text("original\n", encoding="utf-8")
+    agent = build_agent(
+        tmp_path,
+        [
+            '<tool name="write_file" path="hello.txt"><content>changed\n</content></tool>',
+            "<final>Done.</final>",
+        ],
+    )
+    agent.ask("Edit hello.txt")
+    session_id = agent.session["id"]
+
+    # Simulate resuming in a fresh agent instance
+    workspace = build_workspace(tmp_path)
+    agent_dir = tmp_path / ".mini-coding-agent"
+    store = SessionStore(agent_dir / "sessions")
+    checkpoint_store = CheckpointStore(agent_dir / "checkpoints")
+    resumed = MiniAgent.from_session(
+        model_client=FakeModelClient(["<final>ok</final>"]),
+        workspace=workspace,
+        session_store=store,
+        checkpoint_store=checkpoint_store,
+        session_id=session_id,
+        approval_policy="auto",
+    )
+
+    results = resumed.checkpoint_store.rewind(1)
+    assert results is not None
+    assert (tmp_path / "hello.txt").read_text(encoding="utf-8") == "original\n"

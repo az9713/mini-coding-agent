@@ -260,6 +260,8 @@ mini-coding-agent> /exit
 
 The session is already saved — the agent writes a JSON file to `.mini-coding-agent/sessions/` in your workspace root after every exchange. To continue where you left off, use `--resume latest`:
 
+> **Tip:** If the agent wrote a file you did not intend, type `/rewind` before exiting to undo the changes from the most recent turn. Type `/diff` to review exactly what changed before deciding. These commands are covered in detail in `cli-reference.md`.
+
 ```bash
 uv run mini-coding-agent --resume latest
 ```

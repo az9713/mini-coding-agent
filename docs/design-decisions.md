@@ -400,3 +400,56 @@ The filter applies only to `list_files`. If the model explicitly constructs a
 path to `.git/config` and calls `read_file`, the path validation in `path()`
 will allow it (as long as it does not escape `repo_root`). The ignore list
 suppresses noise, not access.
+
+---
+
+## Why Checkpointing? (File Undo and Diff)
+
+Before checkpointing, approving a `write_file` or `patch_file` call was
+irreversible without a git checkout. If the model produced bad code and
+overwrote a file, the user had to either rely on git or reconstruct the
+original manually. This made `--approval auto` genuinely risky and
+discouraged experimentation.
+
+The checkpointing system borrowed the design from Claude Code's own
+`/rewind` command: snapshot the file **before** the edit, not after. The
+snapshot is taken in one place per tool:
+
+```python
+# tool_write_file, before any filesystem operation
+if self.checkpoint_store:
+    self.checkpoint_store.snapshot(path, self.current_turn)
+
+# tool_patch_file, before reading the file to patch
+if self.checkpoint_store:
+    self.checkpoint_store.snapshot(path, self.current_turn)
+```
+
+**Why snapshot before, not after?** The goal is restoration. Storing the
+post-edit state would tell you what changed; storing the pre-edit state lets
+you undo it. The pre-edit state is the one the user can recover.
+
+**Why deduplicate within a turn?** If the same file is written twice in one
+turn, the checkpoint must hold the **original** state — the state before the
+turn started — not the intermediate state. `snapshot()` checks whether the
+key already exists in the turn data before recording. Only the first call
+stores anything.
+
+**Why separate from the session JSON?** Session history records what the agent
+did (tool calls and their results). Checkpoints record what files looked like
+before changes. Mixing the two would require reading the session file to
+perform a rewind, which is expensive for long sessions. A separate file
+allows `rewind()` to operate without loading session history at all.
+
+**Why delete turn data after a successful rewind?** The files are restored. The
+snapshot data is no longer useful — a second rewind of the same turn cannot
+improve on the already-restored state, and storing stale data risks confusion.
+Deleting ensures that a double rewind returns `None` (the idiomatic "nothing to
+do" signal) rather than silently overwriting files that may have changed since
+the first rewind.
+
+**Why does `checkpoint_store=None` for child agents?** Child agents are
+unconditionally read-only (`read_only=True`). They cannot call `write_file` or
+`patch_file`, so `snapshot()` would never be called. Passing `None` makes the
+invariant explicit and avoids allocating an on-disk file for a child that will
+never write anything.

@@ -67,11 +67,12 @@ The diagram below shows how the six components are arranged inside
 |  | 5) Session Memory       |                                     |
 |  |                         |    +-----------------------------+  |
 |  | SessionStore (JSON)     |    | 6) Delegation               |  |
-|  | record()                |    |                             |  |
-|  | note_tool()             |    | tool_delegate()             |  |
-|  | remember()              |    | child MiniAgent (depth+1)   |  |
-|  | ask()  [main loop]      +--->| read_only=True              |  |
-|  +-------------------------+    | approval_policy="never"     |  |
+|  | CheckpointStore (JSON)  |    |                             |  |
+|  | record()                |    | tool_delegate()             |  |
+|  | note_tool()             |    | child MiniAgent (depth+1)   |  |
+|  | remember()              |    | read_only=True              |  |
+|  | ask()  [main loop]      +--->| approval_policy="never"     |  |
+|  +-------------------------+    | checkpoint_store=None       |  |
 |                                 +-----------------------------+  |
 +------------------------------------------------------------------+
 ```

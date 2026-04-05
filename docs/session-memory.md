@@ -359,21 +359,97 @@ old session.
 
 ## REPL Commands for Session Inspection
 
-The interactive REPL exposes three commands for inspecting and managing the
-current session. None of these commands affect the on-disk session file
-except `/reset`.
+The interactive REPL exposes commands for inspecting and managing the
+current session.
 
 | Command | What it does |
 |---|---|
 | `/memory` | Prints the current working memory: task, files list, and notes list |
 | `/session` | Prints the absolute path to the current session `.json` file |
-| `/reset` | Clears `history[]` to `[]` and `memory` to `{"task": "", "files": [], "notes": []}`, keeps the same session ID, and saves immediately |
+| `/rewind` | Reverts all file changes made by the agent in the most recent turn |
+| `/rewind N` | Reverts file changes from turn number N specifically |
+| `/diff` | Shows a unified diff of all file changes the agent has made this session |
+| `/diff N` | Shows a unified diff of file changes from turn N only |
+| `/reset` | Clears `history[]` to `[]`, `memory` to its empty defaults, and the checkpoint data; keeps the same session ID and saves immediately |
 
-`/reset` is a destructive operation on the session: the history and memory are
-gone and cannot be recovered (the session file on disk is immediately
-overwritten). The session ID is preserved, so the file path does not change.
-Use `/reset` when you want to start a fresh conversation in the same workspace
-without creating a new session file.
+`/reset` is a destructive operation: the history, memory, and checkpoint data are
+gone and cannot be recovered (all files are immediately overwritten on disk).
+The session ID is preserved, so the file path does not change. Use `/reset`
+when you want to start a fresh conversation in the same workspace without
+creating a new session file.
+
+---
+
+## Checkpoint Storage
+
+The checkpointing system records the **pre-edit state** of every file touched
+by `write_file` or `patch_file`, enabling `/rewind` and `/diff` to undo and
+inspect changes without relying on git.
+
+### Location
+
+Checkpoint data is stored in a sibling directory to the sessions folder:
+
+```
+<workspace_root>/.mini-coding-agent/checkpoints/<session-id>.json
+```
+
+The file uses the same session ID as the corresponding session, so they are
+trivially paired.
+
+### JSON structure
+
+```json
+{
+  "1": {
+    "/abs/path/to/utils.py": "original content before turn 1\n",
+    "/abs/path/to/new_file.py": null
+  },
+  "2": {
+    "/abs/path/to/utils.py": "content after turn 1 (pre-turn-2 state)\n"
+  }
+}
+```
+
+Top-level keys are turn numbers (integers serialised as strings for JSON
+compatibility). Each turn maps absolute file paths to original content:
+
+- **String value** — the verbatim file content before the first edit in that
+  turn. The file existed; `rewind` restores this content.
+- **`null` value** — the file did not exist before the turn. `rewind` deletes
+  the file.
+
+### Deduplication
+
+If the same file is written twice in a single turn (e.g. two `write_file`
+calls on the same path), only the **first snapshot** is stored. The
+checkpoint holds the original pre-turn state, not the intermediate state after
+the first write. This ensures that a `/rewind` always restores the file to
+exactly how it looked before the turn started.
+
+### What is not tracked
+
+`run_shell` output that modifies files is **not** captured. Checkpoints only
+track what passes through `write_file` and `patch_file`. Binary file writes are
+also not supported (though neither tool supports binary content in practice).
+
+### `CheckpointStore` class
+
+`CheckpointStore` is the sole owner of checkpoint data. It exposes four
+methods used by the agent:
+
+| Method | Called by | Purpose |
+|---|---|---|
+| `bind(session_id)` | `MiniAgent.__init__` | Loads existing checkpoint data for a session from disk, or initialises an empty dict |
+| `snapshot(filepath, turn)` | `tool_write_file`, `tool_patch_file` | Records the pre-edit state of a file if it has not already been snapshotted in this turn |
+| `rewind(turn)` | `/rewind` REPL handler | Restores all files snapshotted for the given turn and removes the turn data |
+| `diff(turn, workspace_root)` | `/diff` REPL handler | Returns a unified diff between the snapshotted state and the current file state |
+
+The `CheckpointStore` is bound to a session at construction time
+(`checkpoint_store.bind(session["id"])`). When an agent resumes via
+`--resume`, the `CheckpointStore` re-reads the checkpoint JSON from disk,
+making checkpoint data fully persistent across restarts — the same as session
+history.
 
 ---
 

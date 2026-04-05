@@ -832,3 +832,61 @@ This means the model can call the same tool with the same arguments later in
 the session (after at least one different tool call in between) without
 triggering the guard. The intent is to break tight loops, not to forbid
 revisiting files.
+
+---
+
+## File Checkpointing
+
+Before every `write_file` and `patch_file` execution, the agent automatically
+saves a snapshot of the file's current contents. These snapshots are organized
+by **turn** — one turn equals one call to `agent.ask()` — and persisted to
+disk so they survive `--resume`.
+
+### Storage
+
+Checkpoints live alongside session files:
+
+```
+.mini-coding-agent/
+  sessions/
+    20260401-144025-2dd0aa.json    ← session history + memory
+  checkpoints/
+    20260401-144025-2dd0aa.json    ← file snapshots, keyed by turn
+```
+
+The checkpoint JSON structure:
+
+```json
+{
+  "1": {
+    "/abs/path/to/hello.py": "original file content\n"
+  },
+  "2": {
+    "/abs/path/to/utils.py": null
+  }
+}
+```
+
+`null` means the file did not exist before the agent created it. Rewinding
+that turn deletes the file.
+
+### Snapshot deduplication
+
+If the agent writes the same file twice within one turn (two consecutive
+`write_file` calls), only the **first** snapshot is kept. This ensures
+`/rewind` always restores the state from before the agent touched the file
+in that turn, not an intermediate state.
+
+### Accessing checkpoints
+
+Use the REPL commands `/rewind` and `/diff` to interact with checkpoints.
+See [cli-reference.md](cli-reference.md) for full usage.
+
+### Limitations
+
+| Limitation | Detail |
+|------------|--------|
+| `run_shell` not tracked | Files modified by shell commands (e.g. `echo foo > bar.txt`) are not snapshotted. Use `git` for recovery from shell-driven changes. |
+| Binary files | Not applicable — `write_file` and `patch_file` only handle UTF-8 text. |
+| Large files | File contents are stored verbatim as JSON strings. Acceptable for typical source files; avoid checkpointing very large generated files. |
+| Double rewind | After `/rewind N`, the checkpoint for turn N is deleted. A second `/rewind N` returns "no checkpoints for turn N" — this is intentional, not a bug. |

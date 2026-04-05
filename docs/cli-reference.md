@@ -151,7 +151,11 @@ When the agent is started without a positional `PROMPT`, it enters an interactiv
 | `/help` | Print a summary of all available REPL commands. |
 | `/memory` | Print the agent's current working memory: active task description, tracked files, and notes accumulated during the session. |
 | `/session` | Print the absolute path to the current session JSON file on disk. |
-| `/reset` | Clear conversation history and working memory while keeping the same session file and REPL process alive. Useful when you want to start a fresh task without restarting the process. |
+| `/rewind` | Revert all file changes made by the agent in the most recent turn. Restores modified files to their pre-edit state; deletes files that the agent created. |
+| `/rewind N` | Revert file changes from turn number N specifically. Turn numbers start at 1. |
+| `/diff` | Show a unified diff of all file changes the agent has made across all turns in this session. |
+| `/diff N` | Show a unified diff of file changes from turn N only. |
+| `/reset` | Clear conversation history and working memory while keeping the same session file and REPL process alive. Also clears all checkpoint data. Useful when you want to start a fresh task without restarting the process. |
 | `/exit` | Exit the REPL cleanly (exit code `0`). |
 | `/quit` | Alias for `/exit`. |
 

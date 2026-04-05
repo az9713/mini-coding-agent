@@ -82,15 +82,16 @@ Parent agent calls delegate(task, max_steps)
         |
         v
   Create child MiniAgent:
-    model_client  = parent.model_client   (same Ollama connection)
-    workspace     = parent.workspace      (same repo snapshot)
-    session_store = parent.session_store  (writes its own .json file)
-    approval_policy = "never"             (risky tools auto-denied)
-    max_steps     = args["max_steps"]     (default 3)
-    max_new_tokens = parent.max_new_tokens
-    depth         = parent.depth + 1      (increments depth counter)
-    max_depth     = parent.max_depth
-    read_only     = True                  (approve() always False)
+    model_client      = parent.model_client   (same Ollama connection)
+    workspace         = parent.workspace      (same repo snapshot)
+    session_store     = parent.session_store  (writes its own .json file)
+    approval_policy   = "never"               (risky tools auto-denied)
+    max_steps         = args["max_steps"]     (default 3)
+    max_new_tokens    = parent.max_new_tokens
+    depth             = parent.depth + 1      (increments depth counter)
+    max_depth         = parent.max_depth
+    read_only         = True                  (approve() always False)
+    checkpoint_store  = None                  (child cannot write; no checkpoints needed)
         |
         v
   Inject context into child memory:

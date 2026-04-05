@@ -74,12 +74,15 @@ Every test creates an agent through the `build_agent` helper:
 ```python
 def build_agent(tmp_path, outputs, **kwargs):
     workspace = build_workspace(tmp_path)
-    store = SessionStore(tmp_path / ".mini-coding-agent" / "sessions")
+    agent_dir = tmp_path / ".mini-coding-agent"
+    store = SessionStore(agent_dir / "sessions")
+    checkpoint_store = CheckpointStore(agent_dir / "checkpoints")
     approval_policy = kwargs.pop("approval_policy", "auto")
     return MiniAgent(
         model_client=FakeModelClient(outputs),
         workspace=workspace,
         session_store=store,
+        checkpoint_store=checkpoint_store,
         approval_policy=approval_policy,
         **kwargs,
     )

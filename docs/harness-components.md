@@ -1275,6 +1275,79 @@ overwritten with the empty state. This means a reset session file is indistingui
 freshly created one except for the `"created_at"` timestamp. The `/reset` command in the REPL
 calls this method — it is a clean-slate restart without leaving the session.
 
+**`CheckpointStore` — file undo and diff**
+
+`CheckpointStore` is the second storage class in Component 5. While `SessionStore` persists
+**what the agent did**, `CheckpointStore` persists **what the files looked like before** the
+agent changed them. The two structures are complementary.
+
+```python
+class CheckpointStore:
+    def __init__(self, root):
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+        self._data = {}   # {turn_number: {abs_path: original_content_or_None}}
+        self._path = None
+
+    def bind(self, session_id):
+        self._path = self.root / f"{session_id}.json"
+        if self._path.exists():
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
+            self._data = {int(k): v for k, v in raw.items()}
+        else:
+            self._data = {}
+```
+
+The checkpoint file is stored at `.mini-coding-agent/checkpoints/<session-id>.json` — a sibling
+directory to `sessions/`. It is loaded by `bind()` when the agent starts, and written by `_save()`
+after every snapshot. The JSON keys are turn numbers (as strings, because JSON keys must be
+strings); `bind()` converts them back to `int` on load.
+
+```python
+    def snapshot(self, filepath, turn):
+        key = str(filepath)
+        turn_data = self._data.setdefault(turn, {})
+        if key in turn_data:
+            return          # first snapshot wins; subsequent writes in same turn ignored
+        turn_data[key] = filepath.read_text(encoding="utf-8") if filepath.is_file() else None
+        self._save()
+```
+
+`snapshot()` is called at the very start of `tool_write_file` and `tool_patch_file`, before any
+filesystem change. The `if key in turn_data: return` guard ensures deduplication: if the same
+file is written twice in one turn, the checkpoint stores the original pre-turn content, not the
+intermediate post-first-write content.
+
+A `None` value means the file did not exist before the turn. On rewind, a `None` entry causes
+the file to be deleted rather than restored.
+
+```python
+    def rewind(self, turn):
+        turn_data = self._data.get(turn)
+        if not turn_data:
+            return None
+        results = []
+        for filepath_str, original in turn_data.items():
+            fp = Path(filepath_str)
+            if original is None:
+                if fp.exists():
+                    fp.unlink()
+                results.append((filepath_str, "deleted"))
+            else:
+                fp.write_text(original, encoding="utf-8")
+                results.append((filepath_str, "restored"))
+        del self._data[turn]
+        self._save()
+        return results
+```
+
+After restoration, `del self._data[turn]` removes the turn data and saves. A second call with
+the same turn number finds no data and returns `None` — the correct "nothing to do" signal.
+
+The `/rewind` REPL command calls `rewind(latest_turn())` when invoked without an argument, or
+`rewind(N)` when given a specific turn number. The `/diff` command calls `diff(turn, workspace_root)`,
+which uses `difflib.unified_diff` to compare the snapshotted state against the current file content.
+
 **What a session file looks like on disk**
 
 After a two-turn conversation ("list files", "create hello.py"), the session file contains:

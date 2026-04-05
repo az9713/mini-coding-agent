@@ -1,4 +1,5 @@
 import argparse
+import difflib
 import json
 import os
 import re
@@ -14,7 +15,7 @@ from pathlib import Path
 
 
 DOC_NAMES = ("AGENTS.md", "README.md", "pyproject.toml", "package.json")
-HELP_TEXT = "/help, /memory, /session, /reset, /exit"
+HELP_TEXT = "/help, /memory, /session, /rewind, /diff, /reset, /exit"
 WELCOME_ART = (
     "/\\     /\\\\",
     "{  `---'  }",
@@ -26,11 +27,15 @@ WELCOME_ART = (
 HELP_DETAILS = textwrap.dedent(
     """\
     Commands:
-    /help    Show this help message.
-    /memory  Show the agent's distilled working memory.
-    /session Show the path to the saved session file.
-    /reset   Clear the current session history and memory.
-    /exit    Exit the agent.
+    /help      Show this help message.
+    /memory    Show the agent's distilled working memory.
+    /session   Show the path to the saved session file.
+    /rewind    Revert all file changes from the most recent agent turn.
+    /rewind N  Revert file changes from turn N.
+    /diff      Show unified diff of all agent file changes this session.
+    /diff N    Show unified diff of file changes from turn N.
+    /reset     Clear the current session history and memory.
+    /exit      Exit the agent.
     """
 ).strip()
 MAX_TOOL_OUTPUT = 4000
@@ -168,6 +173,94 @@ class SessionStore:
         return files[-1].stem if files else None
 
 
+class CheckpointStore:
+    """Snapshots file contents before agent edits, enabling /rewind and /diff."""
+
+    def __init__(self, root):
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+        self._data = {}
+        self._path = None
+
+    def bind(self, session_id):
+        """Bind to a session and load any existing checkpoint data from disk."""
+        self._path = self.root / f"{session_id}.json"
+        if self._path.exists():
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
+            self._data = {int(k): v for k, v in raw.items()}
+        else:
+            self._data = {}
+
+    def _save(self):
+        if self._path:
+            self._path.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
+
+    def snapshot(self, filepath, turn):
+        """Record file content before an edit. No-op if already snapshotted this turn."""
+        key = str(filepath)
+        turn_data = self._data.setdefault(turn, {})
+        if key in turn_data:
+            return
+        turn_data[key] = filepath.read_text(encoding="utf-8") if filepath.is_file() else None
+        self._save()
+
+    def rewind(self, turn):
+        """Restore files to pre-edit state. Returns [(path, action)] or None if no checkpoint."""
+        turn_data = self._data.get(turn)
+        if not turn_data:
+            return None
+        results = []
+        for filepath_str, original in turn_data.items():
+            fp = Path(filepath_str)
+            if original is None:
+                if fp.exists():
+                    fp.unlink()
+                results.append((filepath_str, "deleted"))
+            else:
+                fp.write_text(original, encoding="utf-8")
+                results.append((filepath_str, "restored"))
+        del self._data[turn]
+        self._save()
+        return results
+
+    def diff(self, turn, workspace_root):
+        """Unified diff for all files changed in a given turn."""
+        turn_data = self._data.get(turn)
+        if not turn_data:
+            return None
+        root = Path(workspace_root)
+        lines = []
+        for filepath_str, original in turn_data.items():
+            fp = Path(filepath_str)
+            try:
+                rel = str(fp.relative_to(root))
+            except ValueError:
+                rel = filepath_str
+            old = (original or "").splitlines(keepends=True)
+            new = fp.read_text(encoding="utf-8").splitlines(keepends=True) if fp.is_file() else []
+            lines.extend(difflib.unified_diff(old, new, fromfile=f"a/{rel}", tofile=f"b/{rel}"))
+        return "".join(lines) or "(no differences)"
+
+    def diff_all(self, workspace_root):
+        """Unified diff across all turns in this session."""
+        if not self._data:
+            return None
+        parts = []
+        for t in sorted(self._data):
+            result = self.diff(t, workspace_root)
+            if result and result != "(no differences)":
+                parts.append(f"--- Turn {t} ---\n{result}")
+        return "\n".join(parts) or "(no differences)"
+
+    def latest_turn(self):
+        """Return the highest turn number that has checkpoints, or None."""
+        return max(self._data) if self._data else None
+
+    @property
+    def turns(self):
+        return sorted(self._data.keys())
+
+
 class FakeModelClient:
     def __init__(self, outputs):
         self.outputs = list(outputs)
@@ -232,6 +325,7 @@ class MiniAgent:
         model_client,
         workspace,
         session_store,
+        checkpoint_store=None,
         session=None,
         approval_policy="ask",
         max_steps=6,
@@ -260,6 +354,9 @@ class MiniAgent:
         self.tools = self.build_tools()
         self.prefix = self.build_prefix()
         self.session_path = self.session_store.save(self.session)
+        self.checkpoint_store = checkpoint_store
+        if self.checkpoint_store:
+            self.checkpoint_store.bind(self.session["id"])
 
     @classmethod
     def from_session(cls, model_client, workspace, session_store, session_id, **kwargs):
@@ -270,6 +367,11 @@ class MiniAgent:
             session=session_store.load(session_id),
             **kwargs,
         )
+
+    @property
+    def current_turn(self):
+        """Turn number = count of user messages recorded so far (1-indexed after first record)."""
+        return sum(1 for item in self.session["history"] if item["role"] == "user")
 
     @staticmethod
     def remember(bucket, item, limit):
@@ -733,6 +835,9 @@ class MiniAgent:
         self.session["history"] = []
         self.session["memory"] = {"task": "", "files": [], "notes": []}
         self.session_store.save(self.session)
+        if self.checkpoint_store:
+            self.checkpoint_store._data = {}
+            self.checkpoint_store._save()
 
     def path(self, raw_path):
         path = Path(raw_path)
@@ -824,6 +929,8 @@ class MiniAgent:
     def tool_write_file(self, args):
         path = self.path(args["path"])
         content = str(args["content"])
+        if self.checkpoint_store:
+            self.checkpoint_store.snapshot(path, self.current_turn)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         return f"wrote {path.relative_to(self.root)} ({len(content)} chars)"
@@ -837,6 +944,8 @@ class MiniAgent:
             raise ValueError("old_text must not be empty")
         if "new_text" not in args:
             raise ValueError("missing new_text")
+        if self.checkpoint_store:
+            self.checkpoint_store.snapshot(path, self.current_turn)
         text = path.read_text(encoding="utf-8")
         count = text.count(old_text)
         if count != 1:
@@ -914,7 +1023,9 @@ def build_welcome(agent, model, host):
 
 def build_agent(args):
     workspace = WorkspaceContext.build(args.cwd)
-    store = SessionStore(Path(workspace.repo_root) / ".mini-coding-agent" / "sessions")
+    agent_dir = Path(workspace.repo_root) / ".mini-coding-agent"
+    store = SessionStore(agent_dir / "sessions")
+    checkpoint_store = CheckpointStore(agent_dir / "checkpoints")
     model = OllamaModelClient(
         model=args.model,
         host=args.host,
@@ -930,6 +1041,7 @@ def build_agent(args):
             model_client=model,
             workspace=workspace,
             session_store=store,
+            checkpoint_store=checkpoint_store,
             session_id=session_id,
             approval_policy=args.approval,
             max_steps=args.max_steps,
@@ -939,6 +1051,7 @@ def build_agent(args):
         model_client=model,
         workspace=workspace,
         session_store=store,
+        checkpoint_store=checkpoint_store,
         approval_policy=args.approval,
         max_steps=args.max_steps,
         max_new_tokens=args.max_new_tokens,
@@ -1004,6 +1117,53 @@ def main(argv=None):
         if user_input == "/reset":
             agent.reset()
             print("session reset")
+            continue
+
+        if user_input == "/rewind" or user_input.startswith("/rewind "):
+            parts = user_input.split(maxsplit=1)
+            if not agent.checkpoint_store:
+                print("checkpoints not available")
+                continue
+            if len(parts) == 1:
+                turn = agent.checkpoint_store.latest_turn()
+                if turn is None:
+                    print("nothing to rewind")
+                    continue
+            else:
+                try:
+                    turn = int(parts[1])
+                except ValueError:
+                    print("usage: /rewind [turn_number]")
+                    continue
+            results = agent.checkpoint_store.rewind(turn)
+            if results is None:
+                print(f"no checkpoints for turn {turn}")
+            else:
+                print(f"reverted turn {turn}:")
+                for filepath, action in results:
+                    try:
+                        rel = Path(filepath).relative_to(agent.root)
+                    except ValueError:
+                        rel = filepath
+                    print(f"  {action}: {rel}")
+            continue
+
+        if user_input == "/diff" or user_input.startswith("/diff "):
+            parts = user_input.split(maxsplit=1)
+            if not agent.checkpoint_store:
+                print("checkpoints not available")
+                continue
+            if len(parts) == 1:
+                result = agent.checkpoint_store.diff_all(agent.workspace.repo_root)
+                print(result if result else "no checkpoints recorded")
+            else:
+                try:
+                    turn = int(parts[1])
+                except ValueError:
+                    print("usage: /diff [turn_number]")
+                    continue
+                result = agent.checkpoint_store.diff(turn, agent.workspace.repo_root)
+                print(result if result else f"no checkpoints for turn {turn}")
             continue
 
         print()
