@@ -645,6 +645,18 @@ class MiniAgent:
                 self.record({"role": "assistant", "content": payload, "created_at": now()})
                 continue
 
+            if kind == "plan":
+                if self.verbose:
+                    print(f"\nProposed plan:\n{payload}\n")
+                if not self._confirm_plan():
+                    final = "Plan cancelled."
+                    self.record({"role": "assistant", "content": final, "created_at": now()})
+                    return final
+                approval_msg = f"Plan approved:\n{payload}\nProceed with execution."
+                self.record({"role": "assistant", "content": approval_msg, "created_at": now()})
+                self.remember(memory["notes"], clip(f"approved plan: {payload}", 300), 5)
+                continue
+
             final = (payload or raw).strip()
             self.record({"role": "assistant", "content": final, "created_at": now()})
             self.remember(memory["notes"], clip(final, 220), 5)
@@ -801,6 +813,11 @@ class MiniAgent:
     @staticmethod
     def parse(raw):
         raw = str(raw)
+        if "<plan>" in raw and ("<tool>" not in raw or raw.find("<plan>") < raw.find("<tool>")):
+            plan_text = MiniAgent.extract(raw, "plan").strip()
+            if plan_text:
+                return "plan", plan_text
+            return "retry", MiniAgent.retry_notice("model returned an empty <plan> block")
         if "<tool>" in raw and ("<final>" not in raw or raw.find("<tool>") < raw.find("<final>")):
             body = MiniAgent.extract(raw, "tool")
             try:
@@ -899,6 +916,17 @@ class MiniAgent:
         if end == -1:
             return text[start:]
         return text[start:end]
+
+    def _confirm_plan(self):
+        if self.approval_policy == "auto":
+            return True
+        if self.approval_policy == "never":
+            return False
+        try:
+            answer = input("execute plan? [Y/n] ")
+        except EOFError:
+            return False
+        return answer.strip().lower() in {"", "y", "yes"}
 
     def reset(self):
         self.session["history"] = []

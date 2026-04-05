@@ -647,3 +647,89 @@ def test_auto_verify_real_pytest_passes(tmp_path):
 
     assert result is not None
     assert "passed" in result
+
+
+# ---------------------------------------------------------------------------
+# Structured planning phase tests
+# ---------------------------------------------------------------------------
+
+def test_parse_returns_plan_kind():
+    kind, payload = MiniAgent.parse("<plan>\n1. Read file\n2. Write fix\n</plan>")
+    assert kind == "plan"
+    assert "Read file" in payload
+
+
+def test_parse_plan_not_shadowed_by_final():
+    # <plan> takes precedence over any stray <final> that appears after it
+    kind, payload = MiniAgent.parse("<plan>1. Do it</plan><final>done</final>")
+    assert kind == "plan"
+
+
+def test_parse_empty_plan_becomes_retry():
+    kind, _ = MiniAgent.parse("<plan>   </plan>")
+    assert kind == "retry"
+
+
+def test_plan_confirmation_prompts_user_when_ask_policy(tmp_path):
+    """approval_policy='ask' calls input() for plan confirmation."""
+    agent = build_agent(
+        tmp_path,
+        [
+            "<plan>\n1. Read file\n2. Write fix\n</plan>",
+            "<final>Done.</final>",
+        ],
+        approval_policy="ask",
+    )
+    with patch("builtins.input", return_value="y"):
+        answer = agent.ask("fix the bug")
+    assert answer == "Done."
+
+
+def test_plan_cancelled_returns_early(tmp_path):
+    """Saying 'n' at plan confirmation returns 'Plan cancelled.' immediately."""
+    agent = build_agent(
+        tmp_path,
+        ["<plan>\n1. Read file\n2. Write fix\n</plan>"],
+        approval_policy="ask",
+    )
+    with patch("builtins.input", return_value="n"):
+        answer = agent.ask("fix the bug")
+    assert answer == "Plan cancelled."
+
+
+def test_plan_auto_approval_skips_input(tmp_path):
+    """approval_policy='auto' approves the plan without calling input()."""
+    agent = build_agent(
+        tmp_path,
+        [
+            "<plan>\n1. Read file\n2. Write fix\n</plan>",
+            "<final>Done.</final>",
+        ],
+        approval_policy="auto",
+    )
+    with patch("builtins.input") as mock_input:
+        answer = agent.ask("fix the bug")
+    assert answer == "Done."
+    mock_input.assert_not_called()
+
+
+def test_plan_does_not_consume_tool_step_budget(tmp_path):
+    """A <plan> response does not count against max_steps.
+
+    With max_steps=2 the loop allows calling the model while tool_steps<2.
+    Plan sets tool_steps=0 (not 1), so after 1 tool call (tool_steps=1<2)
+    the loop still enters and can read the <final>. If plan counted as a tool
+    step the sequence would exhaust the budget before reaching <final>.
+    """
+    agent = build_agent(
+        tmp_path,
+        [
+            "<plan>\n1. Read\n2. Write\n</plan>",
+            '<tool>{"name":"list_files","args":{"path":"."}}</tool>',
+            "<final>Done.</final>",
+        ],
+        max_steps=2,
+        approval_policy="auto",
+    )
+    answer = agent.ask("do the task")
+    assert answer == "Done."
