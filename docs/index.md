@@ -26,6 +26,7 @@ The zero-dependency constraint is also deliberate. Every import in the file is f
 | `session-memory.md` | Session IDs, JSON persistence, working memory structure, history compression, and the `/memory` view |
 | `delegation.md` | How the `delegate` tool spawns a read-only child agent, depth limits, and why subagents are always `approval=never` |
 | `cli-reference.md` | Every CLI flag and REPL command with types, defaults, and examples |
+| `testing.md` | End-to-end manual testing guide for all six major features against a real Ollama model |
 | `contributing.md` | Dev environment setup, how to add a new tool, testing with `FakeModelClient`, and the linter configuration |
 | `design-decisions.md` | The reasoning behind single-file design, stdlib-only, XML tool format, the `patch_file` uniqueness constraint, and more |
 
