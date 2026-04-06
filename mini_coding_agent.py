@@ -675,7 +675,7 @@ class MiniAgent:
                     self.record({"role": "assistant", "content": final, "created_at": now()})
                     return final
                 approval_msg = f"Plan approved:\n{payload}\nProceed with execution."
-                self.record({"role": "assistant", "content": approval_msg, "created_at": now()})
+                self.record({"role": "user", "content": approval_msg, "created_at": now()})
                 self.remember(memory["notes"], clip(f"approved plan: {payload}", 300), 5)
                 continue
 

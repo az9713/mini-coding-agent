@@ -742,12 +742,12 @@ def test_end_to_end_plan_then_tool_then_final(tmp_path):
     answer = agent.ask("show me hello.txt")
     assert answer == "File contains: alpha"
     history_kinds = [(i["role"], i.get("name")) for i in agent.session["history"]]
-    assert ("assistant", None) in history_kinds   # plan approval message recorded
+    assert ("user", None) in history_kinds   # plan approval recorded as user message
     assert ("tool", "read_file") in history_kinds
 
 
 def test_plan_approval_recorded_in_history(tmp_path):
-    """Approved plan is stored as assistant message so model sees context on next step."""
+    """Approved plan is stored as user message so model treats it as instruction to proceed."""
     agent = build_agent(
         tmp_path,
         [
@@ -758,8 +758,8 @@ def test_plan_approval_recorded_in_history(tmp_path):
         approval_policy="auto",
     )
     agent.ask("do something")
-    assistant_msgs = [i["content"] for i in agent.session["history"] if i["role"] == "assistant"]
-    assert any("Plan approved" in m for m in assistant_msgs)
+    user_msgs = [i["content"] for i in agent.session["history"] if i["role"] == "user"]
+    assert any("Plan approved" in m for m in user_msgs)
 
 
 # ---------------------------------------------------------------------------
