@@ -629,7 +629,8 @@ class MiniAgent:
             memory["task"] = clip(user_message.strip(), 300)
         self.record({"role": "user", "content": user_message, "created_at": now()})
 
-        on_token = (lambda t: print(t, end="", flush=True)) if self.verbose else None
+        token_buffer = []
+        on_token = (lambda t: token_buffer.append(t)) if self.verbose else None
 
         tool_steps = 0
         attempts = 0
@@ -637,9 +638,8 @@ class MiniAgent:
 
         while tool_steps < self.max_steps and attempts < max_attempts:
             attempts += 1
+            token_buffer.clear()
             raw = self.model_client.complete(self.prompt(user_message), self.max_new_tokens, on_token=on_token)
-            if self.verbose:
-                print()
             kind, payload = self.parse(raw)
 
             if kind == "tool":
@@ -680,6 +680,8 @@ class MiniAgent:
                 continue
 
             final = (payload or raw).strip()
+            if self.verbose:
+                print(final)
             self.record({"role": "assistant", "content": final, "created_at": now()})
             self.remember(memory["notes"], clip(final, 220), 5)
             return final
