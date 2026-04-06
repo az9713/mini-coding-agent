@@ -57,10 +57,11 @@ All commands below assume your working directory is `~/Downloads/test-agent`.
 
 ---
 
-## Feature 1 — Streaming
+## Feature 1 — Clean output (buffered streaming)
 
-Tokens should appear one by one as the model generates them, not all at once
-after a delay.
+The agent buffers each model response and only prints validated output —
+no raw XML tags, no repeated failed attempts, no trailing tool calls after
+a plan block.
 
 ```bash
 mini-coding-agent
@@ -70,8 +71,9 @@ mini-coding-agent> what files are in this directory?
 mini-coding-agent> /exit
 ```
 
-**Pass:** characters appear incrementally on the terminal during generation.  
-**Fail:** blank screen, then the full response appears at once.
+**Pass:** the answer appears without `<tool>`, `<final>`, or any raw XML.
+Only `[tool_name]` brackets and clean answer text are printed.  
+**Fail:** raw `<tool>...</tool>` or `<final>...</final>` tags appear in the output.
 
 ---
 
@@ -251,7 +253,7 @@ escaping is error-prone. If you see many retries, try a larger model with
 
 | Feature | Command | Pass condition |
 |---|---|---|
-| Streaming | `mini-coding-agent` | Tokens appear incrementally |
+| Clean output | `mini-coding-agent` | No raw XML tags; only brackets and answer text printed |
 | Resume | `mini-coding-agent --resume latest` | Prior session history visible to model |
 | `/diff` | `/diff` inside REPL | Unified diff shows agent's edits |
 | `/rewind` | `/rewind` inside REPL | File restored to pre-edit state |

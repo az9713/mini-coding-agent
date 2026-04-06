@@ -232,9 +232,16 @@ Important flags:
   require the model to emit a numbered plan before using any tools, with user confirmation; default: disabled
 
 &nbsp;
-## Streaming Output
+## Output
 
-Tokens stream to the terminal as the model generates them — no more staring at a blank screen. The model's tool calls and final answer appear in real time. This is on by default in the REPL and one-shot mode.
+The agent buffers each model response and only prints validated output:
+
+- **Tool calls** — prints `[tool_name]` when the call executes successfully
+- **Final answers** — prints the clean answer text (no `<tool>` or `<final>` tags)
+- **Retries** — prints nothing; failed attempts are silently discarded
+- **Plans** — prints the formatted plan and waits for confirmation
+
+This keeps the terminal clean. Raw model output, failed attempts, and malformed XML are never shown.
 
 Child agents spawned via `delegate` are always silent to keep the output clean.
 

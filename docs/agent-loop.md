@@ -95,7 +95,7 @@ This means the agent can make up to 18 total model calls while executing at most
 
 `parse()` always returns a two-element tuple `(kind, payload)`. The `kind` string is one of exactly four values. The loop handles each differently.
 
-**`"plan"`** means the model emitted a `<plan>` block before using any tools. This only occurs when the agent is started with `--plan`. The payload is the plan text. The loop calls `_confirm_plan()`, which shows the plan to the user and waits for confirmation (or auto-approves if `--approval auto`). If approved, the plan text is injected into history so the model knows to proceed; the loop then `continue`s. If rejected, the loop returns `"Plan cancelled."` immediately. Neither `tool_steps` nor the effective retry budget is charged for a plan response — it does not consume the tool step budget.
+**`"plan"`** means the model emitted a `<plan>` block before using any tools. This only occurs when the agent is started with `--plan`. The payload is the plan text. The loop calls `_confirm_plan()`, which shows the plan to the user and waits for confirmation (or auto-approves if `--approval auto`). If approved, a `user`-role message (`"Plan approved: ... Proceed with execution."`) is injected into history — recorded as `user` rather than `assistant` so the model treats it as an external instruction to switch from planning to tool execution. The loop then `continue`s. If rejected, the loop returns `"Plan cancelled."` immediately. Neither `tool_steps` nor the effective retry budget is charged for a plan response — it does not consume the tool step budget.
 
 **`"tool"`** means the model wants to call a function. The payload is a dict with at least a `"name"` key and an `"args"` key. The loop increments `tool_steps`, calls `run_tool(name, args)`, records the result to history, and calls `note_tool()` to update working memory. Then it `continue`s — the model will see the tool result on the next iteration.
 
@@ -211,16 +211,36 @@ The notice is a lightweight self-healing mechanism. It does not require any exte
 
 These are two different things and it is easy to confuse them.
 
-**What appears on the terminal** is the raw model output, streamed token by token via the `on_token` callback. This includes every attempt — malformed or not — because the tokens are printed before `parse()` has had a chance to validate them.
+**What appears on the terminal** is driven by `kind` after `parse()` validates the response — never raw model output. The agent buffers tokens during generation and only prints once validation completes:
+
+| `kind` | What is printed |
+|--------|----------------|
+| `"tool"` | `[tool_name]` bracket when the tool executes |
+| `"final"` | The clean answer text (no `<final>` tags) |
+| `"plan"` | The formatted plan text |
+| `"retry"` | Nothing — failed attempts are silently discarded |
 
 **What goes into the model's context** is the structured history recorded by `record()`. The raw model output is never stored. When `parse()` rejects a malformed call it records only a short retry notice (~100 chars). When a tool succeeds it records the structured result.
 
-For the session shown below, the context the model actually saw looked like this — not the raw XML:
+### What retries look like in the terminal
+
+With buffered output, retries are invisible to the user. The terminal for a session with several failed `patch_file` attempts looks like:
+
+```
+mini-coding-agent> add a shout() function to hello.py that returns the greeting in uppercase
+[read_file]
+[write_file]
+auto-verify:
+tests passed (exit 0):
+.
+1 passed in 0.01s
+Done.
+```
+
+Clean — no raw XML, no repeated lines. Internally, the model made multiple attempts before succeeding. The context the model saw for that session contained:
 
 ```
 [user] add a shout() function...
-[tool:read_file] {"path":"hello.py","start":1,"end":50}
-# hello.py   1: def greet(name):...
 [tool:read_file] {"path":"hello.py","start":1,"end":50}
 # hello.py   1: def greet(name):...
 [assistant] Runtime notice: model returned malformed tool JSON...
@@ -231,46 +251,9 @@ wrote hello.py (98 chars)
 [assistant] Done.
 ```
 
-Each retry notice is short and fixed in length. The raw malformed `<tool>` strings you saw streamed to the terminal were discarded by `parse()` and never entered the history. Context growth from retries is therefore modest — a few hundred characters of retry notices rather than the full repeated XML.
+Each retry notice is short and fixed in length. The raw malformed `<tool>` strings were buffered by the agent and discarded after `parse()` rejected them — they never entered history. Context growth from retries is modest: a few hundred characters of retry notices rather than the full repeated XML.
 
-### What retries look like in the terminal
-
-Because the agent streams tokens to the terminal as the model generates them, every attempt — including failed ones — is printed before the agent has a chance to validate it. A session with several retries looks like this:
-
-```
-mini-coding-agent> add a shout() function to hello.py that returns the greeting in uppercase
-
-<tool>{"name":"read_file","path":"hello.py","start":1,"end":50}</tool>
-[read_file]
-<tool>{"name":"read_file","args":{"path":"hello.py","start":1,"end":50}}</tool>
-[read_file]
-<tool name="patch_file" path="hello.py" old_text="def greet(name):\n    return f\"Hello, {name}!\"" new_text="def greet(name):\n    return f\"Hello, {name}!\"\n\ndef shout(text):\n    return text.upper()"</tool>
-<tool name="patch_file" path="hello.py" old_text="def greet(name):\n    return f\"Hello, {name}!\"" new_text="def greet(name):\n    return f\"Hello, {name}!\"\n\ndef shout(text):\n    return text.upper()"</tool>
-<tool name="patch_file" path="hello.py" old_text="def greet(name):\n    return f\"Hello, {name}!\"" new_text="def greet(name):\n    return f\"Hello, {name}!\"\n\ndef shout(name):\n    return f\"HELLO, {name}!\""</tool>
-<tool name="write_file" path="hello.py"><content>
-def greet(name):
-    return f"Hello, {name}!"
-
-def shout(name):
-    return f"HELLO, {name}!"
-</content></tool>
-[write_file]
-auto-verify:
-tests passed (exit 0):
-.
-1 passed in 0.01s
-<final>Done.</final>
-```
-
-What happened step by step:
-
-1. The first `read_file` call used the wrong format (missing `"args"` wrapper) — streamed to terminal, rejected by `parse()`, retry notice sent to model.
-2. The model corrected the format on the second attempt — `[read_file]` confirms it executed.
-3. The model tried `patch_file` three times. The first two were malformed XML (unclosed tag, wrong escaping) — each streamed to the terminal before the agent could validate them. The third was rejected because `old_text` did not match exactly.
-4. The model switched strategy and used `write_file` instead — this succeeded, triggering `auto-verify`.
-5. All tests passed; the model returned `<final>Done.</final>`.
-
-Only calls followed by a `[tool_name]` bracket actually executed. Everything else was a failed attempt absorbed by the retry budget. This is normal behavior for a 4b model — larger models like `qwen3.5:9b` produce fewer retries because they follow the format more reliably.
+This is normal behavior for a 4b model — larger models like `qwen3.5:9b` produce fewer retries because they follow the format more reliably.
 
 ---
 
