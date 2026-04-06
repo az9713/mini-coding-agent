@@ -207,6 +207,32 @@ if kind == "retry":
 
 The notice is a lightweight self-healing mechanism. It does not require any external intervention — the model sees its "mistake" and the expected correction format, and the next iteration begins.
 
+### What goes into the context vs what appears on the terminal
+
+These are two different things and it is easy to confuse them.
+
+**What appears on the terminal** is the raw model output, streamed token by token via the `on_token` callback. This includes every attempt — malformed or not — because the tokens are printed before `parse()` has had a chance to validate them.
+
+**What goes into the model's context** is the structured history recorded by `record()`. The raw model output is never stored. When `parse()` rejects a malformed call it records only a short retry notice (~100 chars). When a tool succeeds it records the structured result.
+
+For the session shown below, the context the model actually saw looked like this — not the raw XML:
+
+```
+[user] add a shout() function...
+[tool:read_file] {"path":"hello.py","start":1,"end":50}
+# hello.py   1: def greet(name):...
+[tool:read_file] {"path":"hello.py","start":1,"end":50}
+# hello.py   1: def greet(name):...
+[assistant] Runtime notice: model returned malformed tool JSON...
+[assistant] Runtime notice: model returned malformed tool JSON...
+[assistant] Runtime notice: model returned malformed tool JSON...
+[tool:write_file] {"path":"hello.py","content":"..."}
+wrote hello.py (98 chars)
+[assistant] Done.
+```
+
+Each retry notice is short and fixed in length. The raw malformed `<tool>` strings you saw streamed to the terminal were discarded by `parse()` and never entered the history. Context growth from retries is therefore modest — a few hundred characters of retry notices rather than the full repeated XML.
+
 ### What retries look like in the terminal
 
 Because the agent streams tokens to the terminal as the model generates them, every attempt — including failed ones — is printed before the agent has a chance to validate it. A session with several retries looks like this:
