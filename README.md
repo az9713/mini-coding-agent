@@ -248,7 +248,7 @@ Child agents spawned via `delegate` are always silent to keep the output clean.
 &nbsp;
 ## Demo: /diff and /rewind
 
-https://github.com/az9713/mini-coding-agent/raw/main/docs/demo_1_diff_rewind_small.mp4
+https://github.com/user-attachments/assets/674740a7-6f2f-4e14-a955-39d465ac975c
 
 &nbsp;
 ## Auto-Verify Tests
@@ -262,9 +262,14 @@ uv run mini-coding-agent --approval auto --auto-verify
 The agent detects test commands from `pyproject.toml` (pytest), `package.json` (npm test), or `Makefile` (make test). Test results are appended to the tool output so the model sees failures immediately and can fix them in the next step.
 
 &nbsp;
+## Demo: Auto-Verify
+
+<img src="docs/demo_2_auto_verify_small.jpg" width="700px">
+
+&nbsp;
 ## Demo: Plan Mode
 
-https://github.com/az9713/mini-coding-agent/raw/main/docs/demo_3_plan_mode_small.mp4
+https://github.com/user-attachments/assets/bd9f5284-9dbb-4e8d-9b11-d7a93ae93f97
 
 &nbsp;
 ## Structured Planning
