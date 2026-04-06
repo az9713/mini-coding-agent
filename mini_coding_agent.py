@@ -391,6 +391,7 @@ class MiniAgent:
         self.verbose = verbose
         self.auto_verify = auto_verify
         self.plan_mode = plan_mode
+        self._plan_approved = False
         self.session = session or {
             "id": datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6],
             "created_at": now(),
@@ -668,13 +669,19 @@ class MiniAgent:
                 continue
 
             if kind == "plan":
+                if self._plan_approved:
+                    # Plan already confirmed — nudge the model to use tools instead
+                    self.record({"role": "user", "content": "Plan already approved. Do NOT emit another <plan> block. Use tools now.", "created_at": now()})
+                    continue
                 if self.verbose:
                     print(f"\nProposed plan:\n{payload}\n")
                 if not self._confirm_plan():
                     final = "Plan cancelled."
                     self.record({"role": "assistant", "content": final, "created_at": now()})
                     return final
-                approval_msg = f"Plan approved:\n{payload}\nProceed with execution."
+                self._plan_approved = True
+                self.record({"role": "assistant", "content": raw, "created_at": now()})
+                approval_msg = "Plan approved. Execute the plan now using tools. Do NOT emit another <plan> block."
                 self.record({"role": "user", "content": approval_msg, "created_at": now()})
                 self.remember(memory["notes"], clip(f"approved plan: {payload}", 300), 5)
                 continue

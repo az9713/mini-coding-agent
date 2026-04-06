@@ -10,7 +10,7 @@ before reading the source.
 ## The Monolith Rationale
 
 The entire agent — REPL, tools, session storage, LLM client, prompt
-assembly, context compression — lives in a single file of roughly 1,017
+assembly, context compression — lives in a single file of roughly 1,345
 lines. That is a deliberate choice, not an oversight.
 
 Sebastian Raschka designed the project as an **educational artifact**: a
@@ -256,7 +256,7 @@ question at the bottom, no matter how many tool turns have elapsed.
 
 ## Component 3: Structured Tools, Validation, and Permissions
 
-The agent exposes six tools permanently and a seventh (`delegate`) only when
+The agent exposes seven tools permanently and an eighth (`delegate`) only when
 the agent is not already at maximum delegation depth.
 
 ### The tool table

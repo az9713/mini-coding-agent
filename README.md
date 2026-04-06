@@ -246,6 +246,11 @@ This keeps the terminal clean. Raw model output, failed attempts, and malformed 
 Child agents spawned via `delegate` are always silent to keep the output clean.
 
 &nbsp;
+## Demo: /diff and /rewind
+
+https://github.com/az9713/mini-coding-agent/raw/main/docs/demo_1_diff_rewind_small.mp4
+
+&nbsp;
 ## Auto-Verify Tests
 
 Use `--auto-verify` to automatically run your project's tests after every file write or patch:
@@ -255,6 +260,11 @@ uv run mini-coding-agent --approval auto --auto-verify
 ```
 
 The agent detects test commands from `pyproject.toml` (pytest), `package.json` (npm test), or `Makefile` (make test). Test results are appended to the tool output so the model sees failures immediately and can fix them in the next step.
+
+&nbsp;
+## Demo: Plan Mode
+
+https://github.com/az9713/mini-coding-agent/raw/main/docs/demo_3_plan_mode_small.mp4
 
 &nbsp;
 ## Structured Planning

@@ -29,7 +29,7 @@ Key CLI flags: `--cwd`, `--model`, `--host`, `--approval` (ask/auto/never), `--m
 
 ## Architecture
 
-The entire agent lives in a single file: `mini_coding_agent.py` (~1017 lines). This is intentional — the project prioritizes readability over modularity.
+The entire agent lives in a single file: `mini_coding_agent.py` (~1345 lines). This is intentional — the project prioritizes readability over modularity.
 
 The code is organized around **6 explicitly documented components**:
 

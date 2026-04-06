@@ -34,7 +34,7 @@ multi-module system requires context-switching between files, tracking
 relative imports, and building a mental picture of which layer owns what.
 None of that overhead exists here.
 
-The tradeoff is real: 1,017 lines is approaching the limit of what a single
+The tradeoff is real: 1,345 lines is approaching the limit of what a single
 file can do legibly. Adding a second model backend, a plugin system, or a
 REST interface would push the file to a size where the single-file benefit
 inverts. For a learning project, the current size is close to ideal. For a
